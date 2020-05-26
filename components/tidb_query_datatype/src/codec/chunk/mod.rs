@@ -2,6 +2,7 @@
 
 mod chunk;
 mod column;
+mod chunkedvec;
 
 pub use crate::codec::{Error, Result};
 
