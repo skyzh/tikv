@@ -279,6 +279,7 @@ impl RpnExpression {
     }
 }
 
+/*
 #[cfg(test)]
 mod tests {
     #![allow(clippy::float_cmp)]
@@ -1270,3 +1271,4 @@ mod tests {
         profiler::stop();
     }
 }
+*/
