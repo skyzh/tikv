@@ -48,10 +48,8 @@ fn json_replace(args: &[ScalarValueRef]) -> Result<Option<Json>> {
 fn json_modify(args: &[ScalarValueRef], mt: ModifyType) -> Result<Option<Json>> {
     assert!(args.len() >= 2);
     // base Json argument
-    let base: Option<&Json> = args[0].as_ref();
-    let base = base
-        .as_ref()
-        .map_or(Json::none(), |json| Ok(json.to_owned()))?;
+    let base: Option<&Json> = args[0].into();
+    let base = base.map_or(Json::none(), |json| Ok(json.to_owned()))?;
 
     let buf_size = args.len() / 2;
 
@@ -59,13 +57,12 @@ fn json_modify(args: &[ScalarValueRef], mt: ModifyType) -> Result<Option<Json>> 
     let mut values = Vec::with_capacity(buf_size);
 
     for chunk in args[1..].chunks(2) {
-        let path: Option<&Bytes> = chunk[0].as_ref();
-        let value: Option<&Json> = chunk[1].as_ref();
+        let path: Option<&Bytes> = chunk[0].into();
+        let value: Option<&Json> = chunk[1].into();
 
         path_expr_list.push(try_opt!(parse_json_path(path)));
 
         let value = value
-            .as_ref()
             .map_or(Json::none(), |json| Ok(json.to_owned()))?;
         values.push(value);
     }
@@ -96,7 +93,7 @@ fn json_array(args: &[Option<&Json>]) -> Result<Option<Json>> {
     for arg in args {
         match arg {
             None => jsons.push(Json::none()?),
-            Some(j) => jsons.push(j.to_owned()),
+            Some(j) => jsons.push(*j.to_owned()),
         }
     }
     Ok(Some(Json::from_array(jsons)?))
@@ -123,16 +120,16 @@ fn json_object(raw_args: &[ScalarValueRef]) -> Result<Option<Json>> {
     let mut pairs = BTreeMap::new();
     for chunk in raw_args.chunks(2) {
         assert_eq!(chunk.len(), 2);
-        let key: Option<&Bytes> = chunk[0].as_ref();
+        let key: Option<&Bytes> = chunk[0].into();
         if key.is_none() {
             return Err(other_err!(
                 "Data truncation: JSON documents may not contain NULL member names."
             ));
         }
-        let key = String::from_utf8(key.as_ref().unwrap().to_owned())
+        let key = String::from_utf8(key.unwrap().to_owned())
             .map_err(|e| tidb_query_datatype::codec::Error::from(e))?;
 
-        let value: Option<&Json> = chunk[1].as_ref();
+        let value: Option<&Json> = chunk[1].into();
         let value = match value {
             None => Json::none()?,
             Some(v) => v.to_owned(),
@@ -191,7 +188,7 @@ fn valid_paths(expr: &tipb::Expr) -> Result<()> {
 #[inline]
 fn json_extract(args: &[ScalarValueRef]) -> Result<Option<Json>> {
     assert!(args.len() >= 2);
-    let j: Option<&Json> = args[0].as_ref();
+    let j: Option<&Json> = args[0].into();
     let j = match j.as_ref() {
         None => return Ok(None),
         Some(j) => j.to_owned(),
@@ -224,8 +221,8 @@ fn json_keys(args: &[ScalarValueRef]) -> Result<Option<Json>> {
 #[inline]
 fn json_length(args: &[ScalarValueRef]) -> Result<Option<Int>> {
     assert!(!args.is_empty() && args.len() <= 2);
-    let j: Option<&Json> = args[0].as_ref();
-    let j = match j.as_ref() {
+    let j: Option<&Json> = args[0].into();
+    let j = match j {
         None => return Ok(None),
         Some(j) => j.to_owned(),
     };
@@ -239,7 +236,7 @@ fn json_length(args: &[ScalarValueRef]) -> Result<Option<Int>> {
 #[inline]
 fn json_remove(args: &[ScalarValueRef]) -> Result<Option<Json>> {
     assert!(args.len() >= 2);
-    let j: Option<&Json> = args[0].as_ref();
+    let j: Option<&Json> = args[0].into();
     let j = match j.as_ref() {
         None => return Ok(None),
         Some(j) => j.to_owned(),
@@ -253,7 +250,7 @@ fn json_remove(args: &[ScalarValueRef]) -> Result<Option<Json>> {
 fn parse_json_path_list(args: &[ScalarValueRef]) -> Result<Option<Vec<PathExpression>>> {
     let mut path_expr_list = Vec::with_capacity(args.len());
     for arg in args {
-        let json_path: Option<&Bytes> = arg.as_ref();
+        let json_path: Option<&Bytes> = arg.clone().into();
 
         path_expr_list.push(try_opt!(parse_json_path(json_path)));
     }

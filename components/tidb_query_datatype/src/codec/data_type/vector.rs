@@ -24,6 +24,16 @@ pub enum VectorValue {
     Json(Vec<Option<Json>>),
 }
 
+pub trait RefVec<T> {
+    fn get_ref(&self, idx: usize) -> Option<&T>;
+}
+
+impl<T> RefVec<T> for Vec<Option<T>> {
+    fn get_ref(&self, idx: usize) -> Option<&T> {
+        self[idx].as_ref()
+    }
+}
+
 impl VectorValue {
     /// Creates an empty `VectorValue` according to `eval_tp` and reserves capacity according
     /// to `capacity`.
@@ -152,7 +162,7 @@ impl VectorValue {
     pub fn get_scalar_ref(&self, index: usize) -> ScalarValueRef<'_> {
         match_template_evaluable! {
             TT, match self {
-                VectorValue::TT(v) => ScalarValueRef::TT(&v[index]),
+                VectorValue::TT(v) => ScalarValueRef::TT(v.get_ref(index)),
             }
         }
     }

@@ -79,14 +79,14 @@ pub trait RpnFnArg: std::fmt::Debug {
 
 /// Represents an RPN function argument of a `ScalarValue`.
 #[derive(Clone, Copy, Debug)]
-pub struct ScalarArg<'a, T: Evaluable>(&'a Option<T>);
+pub struct ScalarArg<'a, T: Evaluable>(Option<&'a T>);
 
 impl<'a, T: Evaluable> RpnFnArg for ScalarArg<'a, T> {
-    type Type = &'a Option<T>;
+    type Type = Option<&'a T>;
 
     /// Gets the value in the given row. All rows of a `ScalarArg` share the same value.
     #[inline]
-    fn get(&self, _row: usize) -> &'a Option<T> {
+    fn get(&self, _row: usize) -> Option<&'a T> {
         self.0
     }
 }
@@ -196,9 +196,9 @@ impl<A: Evaluable, E: Evaluator> Evaluator for ArgConstructor<A, E> {
     ) -> Result<VectorValue> {
         match &args[self.arg_index] {
             RpnStackNode::Scalar { value, .. } => {
-                let v = A::borrow_scalar_value(value);
+                let v = A::borrow_scalar_value(value).as_ref();
                 let new_def = Arg {
-                    arg: ScalarArg(v),
+                    arg: ScalarArg(v.clone()),
                     rem: def,
                 };
                 self.inner

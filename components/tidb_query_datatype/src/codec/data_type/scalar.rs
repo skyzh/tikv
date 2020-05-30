@@ -47,7 +47,7 @@ impl ScalarValue {
     pub fn as_scalar_value_ref(&self) -> ScalarValueRef<'_> {
         match_template_evaluable! {
             TT, match self {
-                ScalarValue::TT(v) => ScalarValueRef::TT(v),
+                ScalarValue::TT(v) => ScalarValueRef::TT(v.as_ref()),
             }
         }
     }
@@ -149,13 +149,13 @@ impl From<ScalarValue> for Option<f64> {
 /// A scalar value reference container. Can be created from `ScalarValue` or `VectorValue`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScalarValueRef<'a> {
-    Int(&'a Option<super::Int>),
-    Real(&'a Option<super::Real>),
-    Decimal(&'a Option<super::Decimal>),
-    Bytes(&'a Option<super::Bytes>),
-    DateTime(&'a Option<super::DateTime>),
-    Duration(&'a Option<super::Duration>),
-    Json(&'a Option<super::Json>),
+    Int(Option<&'a super::Int>),
+    Real(Option<&'a super::Real>),
+    Decimal(Option<&'a super::Decimal>),
+    Bytes(Option<&'a super::Bytes>),
+    DateTime(Option<&'a super::DateTime>),
+    Duration(Option<&'a super::Duration>),
+    Json(Option<&'a super::Json>),
 }
 
 impl<'a> ScalarValueRef<'a> {
@@ -164,7 +164,7 @@ impl<'a> ScalarValueRef<'a> {
     pub fn to_owned(self) -> ScalarValue {
         match_template_evaluable! {
             TT, match self {
-                ScalarValueRef::TT(v) => ScalarValue::TT(v.clone()),
+                ScalarValueRef::TT(v) => ScalarValue::TT(v.map(|x| x.clone())),
             }
         }
     }
@@ -196,7 +196,7 @@ impl<'a> ScalarValueRef<'a> {
                     Some(val) => {
                         // Always encode to INT / UINT instead of VAR INT to be efficient.
                         let is_unsigned = field_type.is_unsigned();
-                        output.write_evaluable_datum_int(*val, is_unsigned)?;
+                        output.write_evaluable_datum_int(**val, is_unsigned)?;
                     }
                 }
                 Ok(())
@@ -240,7 +240,7 @@ impl<'a> ScalarValueRef<'a> {
                         output.write_evaluable_datum_null()?;
                     }
                     Some(val) => {
-                        output.write_evaluable_datum_date_time(*val, ctx)?;
+                        output.write_evaluable_datum_date_time(**val, ctx)?;
                     }
                 }
                 Ok(())
@@ -251,7 +251,7 @@ impl<'a> ScalarValueRef<'a> {
                         output.write_evaluable_datum_null()?;
                     }
                     Some(val) => {
-                        output.write_evaluable_datum_duration(*val)?;
+                        output.write_evaluable_datum_duration(**val)?;
                     }
                 }
                 Ok(())
@@ -309,7 +309,7 @@ impl<'a> ScalarValueRef<'a> {
             TT = [Real, Decimal, DateTime, Duration, Json],
             match (self, other) {
                 (ScalarValueRef::TT(v1), ScalarValueRef::TT(v2)) => v1.cmp(v2),
-                (ScalarValueRef::Int(v1), ScalarValueRef::Int(v2)) => compare_int(v1, v2, &field_type),
+                (ScalarValueRef::Int(v1), ScalarValueRef::Int(v2)) => compare_int(v1.clone(), v2.clone(), &field_type),
                 (ScalarValueRef::Bytes(None), ScalarValueRef::Bytes(None)) => Ordering::Equal,
                 (ScalarValueRef::Bytes(Some(_)), ScalarValueRef::Bytes(None)) => Ordering::Greater,
                 (ScalarValueRef::Bytes(None), ScalarValueRef::Bytes(Some(_))) => Ordering::Less,
@@ -328,14 +328,14 @@ impl<'a> ScalarValueRef<'a> {
 
 #[inline]
 fn compare_int(
-    lhs: &Option<super::Int>,
-    rhs: &Option<super::Int>,
+    lhs: Option<&super::Int>,
+    rhs: Option<&super::Int>,
     field_type: &FieldType,
 ) -> Ordering {
     if field_type.is_unsigned() {
-        lhs.map(|i| i as u64).cmp(&rhs.map(|i| i as u64))
+        lhs.map(|i| *i as u64).cmp(&rhs.map(|i| *i as u64))
     } else {
-        lhs.cmp(rhs)
+        lhs.map(|i| *i).cmp(&rhs.map(|i| *i))
     }
 }
 
@@ -364,9 +364,9 @@ macro_rules! impl_as_ref {
 
         impl<'a> ScalarValueRef<'a> {
             #[inline]
-            pub fn $name(&'a self) -> &'a Option<$ty> {
+            pub fn $name(self) -> Option<&'a $ty> {
                 match self {
-                    ScalarValueRef::$ty(v) => v,
+                    ScalarValueRef::$ty(v) => v.clone(),
                     other => panic!(
                         "Cannot cast {} scalar value into {}",
                         other.eval_type(),
@@ -376,14 +376,14 @@ macro_rules! impl_as_ref {
             }
         }
 
-        impl AsRef<Option<$ty>> for ScalarValueRef<'_> {
+        impl<'a> Into<Option<&'a $ty>> for ScalarValueRef<'a> {
             #[inline]
-            fn as_ref(&self) -> &Option<$ty> {
+            fn into(self) -> Option<&'a $ty> {
                 self.$name()
             }
         }
 
-        // `AsMut` is not implemented intentionally.
+        // `AsRef`, `AsMut` is not implemented intentionally.
     };
 }
 
@@ -419,7 +419,7 @@ impl<'a> PartialEq<ScalarValue> for ScalarValueRef<'a> {
     fn eq(&self, other: &ScalarValue) -> bool {
         match_template_evaluable! {
             TT, match (self, other) {
-                (ScalarValueRef::TT(v1), ScalarValue::TT(v2)) => v1 == &v2,
+                (ScalarValueRef::TT(v1), ScalarValue::TT(v2)) => v1 == &v2.as_ref(),
                 _ => false
             }
         }
