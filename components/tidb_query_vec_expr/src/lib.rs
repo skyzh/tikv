@@ -27,6 +27,7 @@ extern crate test;
 
 pub mod types;
 
+pub mod impl_cast;
 pub mod impl_control;
 pub mod impl_encryption;
 pub mod impl_json;
@@ -40,6 +41,7 @@ use tidb_query_common::Result;
 use tidb_query_datatype::codec::collation::*;
 use tidb_query_datatype::codec::data_type::*;
 
+use self::impl_cast::*;
 use self::impl_control::*;
 use self::impl_encryption::*;
 use self::impl_json::*;
