@@ -62,8 +62,7 @@ fn json_modify(args: &[ScalarValueRef], mt: ModifyType) -> Result<Option<Json>> 
 
         path_expr_list.push(try_opt!(parse_json_path(path)));
 
-        let value = value
-            .map_or(Json::none(), |json| Ok(json.to_owned()))?;
+        let value = value.map_or(Json::none(), |json| Ok(json.to_owned()))?;
         values.push(value);
     }
     Ok(Some(base.as_ref().modify(&path_expr_list, values, mt)?))
@@ -93,7 +92,7 @@ fn json_array(args: &[Option<&Json>]) -> Result<Option<Json>> {
     for arg in args {
         match arg {
             None => jsons.push(Json::none()?),
-            Some(j) => jsons.push(*j.to_owned()),
+            Some(j) => jsons.push((*j).to_owned()),
         }
     }
     Ok(Some(Json::from_array(jsons)?))

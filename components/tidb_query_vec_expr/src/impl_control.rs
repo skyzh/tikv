@@ -21,12 +21,12 @@ pub fn case_when<T: Evaluable>(args: &[ScalarValueRef<'_>]) -> Result<Option<T>>
         if chunk.len() == 1 {
             // Else statement
             let ret: Option<&T> = Evaluable::borrow_scalar_value_ref(&chunk[0]);
-            return Ok(ret.map(|x| *x));
+            return Ok(ret.map(|x| x.clone()));
         }
         let cond: Option<&Int> = Evaluable::borrow_scalar_value_ref(&chunk[0]);
         if cond.map(|x| *x).unwrap_or(0) != 0 {
             let ret: Option<&T> = Evaluable::borrow_scalar_value_ref(&chunk[1]);
-            return Ok(ret.map(|x| *x));
+            return Ok(ret.map(|x| x.clone()));
         }
     }
     Ok(None)
@@ -40,9 +40,9 @@ fn if_condition<T: Evaluable>(
     value_if_false: Option<&T>,
 ) -> Result<Option<T>> {
     Ok(if condition.map(|x| *x).unwrap_or(0) != 0 {
-        value_if_true.map(|x| *x)
+        value_if_true.map(|x| x.clone())
     } else {
-        value_if_false.map(|x| *x)
+        value_if_false.map(|x| x.clone())
     }
     .clone())
 }
