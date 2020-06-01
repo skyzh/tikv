@@ -7,7 +7,53 @@ mod vector;
 pub type Int = i64;
 pub type Real = ordered_float::NotNan<f64>;
 pub type Bytes = Vec<u8>;
-pub use crate::codec::mysql::{Decimal, Duration, Json, JsonType, Time as DateTime};
+pub use crate::codec::mysql::{Decimal, Duration, Json, JsonType, Time as DateTime, json::JsonRef};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BytesRef <'a> {
+    value: &'a [u8]
+}
+
+impl <'a> BytesRef <'a> {
+    pub fn new(value: &'a [u8]) -> Self {
+        Self { value }
+    }
+
+    pub fn to_owned(self) -> Vec<u8> {
+        self.value.to_vec()
+    }
+
+    pub fn as_slice(&self) -> &[u8] {
+        self.value
+    }
+}
+
+pub trait AsOptionRef<T>: Sized {
+    /// Performs the conversion.
+    fn as_option_ref(&self) -> Option<&T>;
+}
+
+pub trait AsJsonOptionRef: Sized {
+    /// Performs the conversion.
+    fn as_option_ref(&self) -> Option<JsonRef>;
+}
+
+pub trait AsBytesOptionRef: Sized {
+    /// Performs the conversion.
+    fn as_option_ref(&self) -> Option<BytesRef>;
+}
+
+pub trait RefVec<T> {
+    fn get_ref(&self, idx: usize) -> Option<&T>;
+}
+
+pub trait BytesRefVec {
+    fn get_ref(&self, idx: usize) -> Option<BytesRef>;
+}
+
+pub trait JsonRefVec {
+    fn get_ref(&self, idx: usize) -> Option<JsonRef>;
+}
 
 // Dynamic eval types.
 pub use self::scalar::{ScalarValue, ScalarValueRef};
@@ -72,7 +118,7 @@ pub trait Evaluable: Clone + std::fmt::Debug + Send + Sync + 'static {
 
     /// Borrows this concrete type from a `ScalarValue` in the same type;
     /// panics if the varient mismatches.
-    fn borrow_scalar_value(v: &ScalarValue) -> &Option<Self>;
+    fn borrow_scalar_value(v: &ScalarValue) -> Option<&Self>;
 
     /// Borrows this concrete type from a `ScalarValueRef` in the same type;
     /// panics if the varient mismatches.
@@ -93,13 +139,13 @@ macro_rules! impl_evaluable_type {
             const EVAL_TYPE: EvalType = EvalType::$ty;
 
             #[inline]
-            fn borrow_scalar_value(v: &ScalarValue) -> &Option<Self> {
-                v.as_ref()
+            fn borrow_scalar_value(v: &ScalarValue) -> Option<&Self> {
+                v.as_option_ref()
             }
 
             #[inline]
             fn borrow_scalar_value_ref<'a>(v: &'a ScalarValueRef<'a>) -> Option<&'a Self> {
-                v.clone().into()
+                v.as_option_ref()
             }
 
             #[inline]

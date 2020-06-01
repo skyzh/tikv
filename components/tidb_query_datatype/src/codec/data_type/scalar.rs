@@ -47,7 +47,7 @@ impl ScalarValue {
     pub fn as_scalar_value_ref(&self) -> ScalarValueRef<'_> {
         match_template_evaluable! {
             TT, match self {
-                ScalarValue::TT(v) => ScalarValueRef::TT(v.as_ref()),
+                ScalarValue::TT(v) => ScalarValueRef::TT(v.as_option_ref()),
             }
         }
     }
@@ -152,20 +152,24 @@ pub enum ScalarValueRef<'a> {
     Int(Option<&'a super::Int>),
     Real(Option<&'a super::Real>),
     Decimal(Option<&'a super::Decimal>),
-    Bytes(Option<&'a super::Bytes>),
+    Bytes(Option<BytesRef<'a>>),
     DateTime(Option<&'a super::DateTime>),
     Duration(Option<&'a super::Duration>),
-    Json(Option<&'a super::Json>),
+    Json(Option<super::JsonRef<'a>>),
 }
 
 impl<'a> ScalarValueRef<'a> {
     #[inline]
     #[allow(clippy::clone_on_copy)]
     pub fn to_owned(self) -> ScalarValue {
-        match_template_evaluable! {
-            TT, match self {
-                ScalarValueRef::TT(v) => ScalarValue::TT(v.map(|x| x.clone())),
-            }
+        match self {
+            ScalarValueRef::Int(v) => ScalarValue::Int(v.cloned()),
+            ScalarValueRef::Decimal(v) => ScalarValue::Decimal(v.cloned()),
+            ScalarValueRef::Real(v) => ScalarValue::Real(v.cloned()),
+            ScalarValueRef::DateTime(v) => ScalarValue::DateTime(v.cloned()),
+            ScalarValueRef::Duration(v) => ScalarValue::Duration(v.cloned()),
+            ScalarValueRef::Json(v) => ScalarValue::Json(v.map(|x| x.to_owned())),
+            ScalarValueRef::Bytes(v) => ScalarValue::Bytes(v.map(|x| x.to_owned())),
         }
     }
 
@@ -229,7 +233,7 @@ impl<'a> ScalarValueRef<'a> {
                         output.write_evaluable_datum_null()?;
                     }
                     Some(ref val) => {
-                        output.write_evaluable_datum_bytes(val)?;
+                        output.write_evaluable_datum_bytes(val.as_slice())?;
                     }
                 }
                 Ok(())
@@ -262,7 +266,7 @@ impl<'a> ScalarValueRef<'a> {
                         output.write_evaluable_datum_null()?;
                     }
                     Some(ref val) => {
-                        output.write_evaluable_datum_json(val)?;
+                        output.write_evaluable_datum_json(*val)?;
                     }
                 }
                 Ok(())
@@ -287,7 +291,7 @@ impl<'a> ScalarValueRef<'a> {
                     Some(val) => {
                         let sort_key = match_template_collator! {
                             TT, match field_type.collation().map_err(crate::codec::Error::from)? {
-                                Collation::TT => TT::sort_key(val)?
+                                Collation::TT => TT::sort_key(val.as_slice())?
                             }
                         };
                         output.write_evaluable_datum_bytes(&sort_key)?;
@@ -316,7 +320,7 @@ impl<'a> ScalarValueRef<'a> {
                 (ScalarValueRef::Bytes(Some(v1)), ScalarValueRef::Bytes(Some(v2))) => {
                     match_template_collator! {
                         TT, match field_type.collation()? {
-                            Collation::TT => TT::sort_compare(v1, v2)?
+                            Collation::TT => TT::sort_compare(v1.as_slice(), v2.as_slice())?
                         }
                     }
                 }
@@ -343,9 +347,9 @@ macro_rules! impl_as_ref {
     ($ty:tt, $name:ident) => {
         impl ScalarValue {
             #[inline]
-            pub fn $name(&self) -> &Option<$ty> {
+            pub fn $name(&self) -> Option<&$ty> {
                 match self {
-                    ScalarValue::$ty(v) => v,
+                    ScalarValue::$ty(v) => v.as_ref(),
                     other => panic!(
                         "Cannot cast {} scalar value into {}",
                         other.eval_type(),
@@ -355,10 +359,10 @@ macro_rules! impl_as_ref {
             }
         }
 
-        impl AsRef<Option<$ty>> for ScalarValue {
+        impl AsOptionRef<$ty> for ScalarValue {
             #[inline]
-            fn as_ref(&self) -> &Option<$ty> {
-                self.$name()
+            fn as_option_ref(&self) -> Option<&$ty> {
+                self.$name();
             }
         }
 
@@ -376,10 +380,10 @@ macro_rules! impl_as_ref {
             }
         }
 
-        impl<'a> Into<Option<&'a $ty>> for ScalarValueRef<'a> {
+        impl <'a> AsOptionRef<$ty> for ScalarValueRef<'a> {
             #[inline]
-            fn into(self) -> Option<&'a $ty> {
-                self.$name()
+            fn as_option_ref(&self) -> Option<&$ty> {
+                self.clone().$name()
             }
         }
 
@@ -390,10 +394,64 @@ macro_rules! impl_as_ref {
 impl_as_ref! { Int, as_int }
 impl_as_ref! { Real, as_real }
 impl_as_ref! { Decimal, as_decimal }
-impl_as_ref! { Bytes, as_bytes }
 impl_as_ref! { DateTime, as_date_time }
 impl_as_ref! { Duration, as_duration }
-impl_as_ref! { Json, as_json }
+
+impl ScalarValue {
+    #[inline]
+    pub fn as_json(&self) -> Option<JsonRef> {
+        match self {
+            ScalarValue::Json(v) => v,
+            other => panic!(
+                "Cannot cast {} scalar value into {}",
+                other.eval_type(),
+                stringify!(Json),
+            ),
+        }
+    }
+}
+
+impl<'a> ScalarValueRef<'a> {
+    #[inline]
+    pub fn as_json(self) -> Option<JsonRef<'a>> {
+        match self {
+            ScalarValueRef::Json(v) => v.clone(),
+            other => panic!(
+                "Cannot cast {} scalar value into {}",
+                other.eval_type(),
+                stringify!(Json),
+            ),
+        }
+    }
+}
+
+impl AsJsonOptionRef for ScalarValue {
+    #[inline]
+    fn as_option_ref(&self) -> Option<JsonRef> {
+        self.as_json()
+    }
+}
+
+impl <'a> AsJsonOptionRef for ScalarValueRef<'a> {
+    #[inline]
+    fn as_option_ref(&self) -> Option<JsonRef> {
+        self.clone().as_json()
+    }
+}
+
+impl AsJsonOptionRef for Option<Json> {
+    #[inline]
+    fn as_option_ref(&self) -> Option<JsonRef> {
+        self.as_ref().map(|x| x.as_ref())
+    }
+}
+
+impl AsBytesOptionRef for Option<Bytes> {
+    #[inline]
+    fn as_option_ref(&self) -> Option<BytesRef> {
+        self.as_ref().map(|x| x.as_slice())
+    }
+}
 
 impl<'a> Ord for ScalarValueRef<'a> {
     fn cmp(&self, other: &Self) -> Ordering {

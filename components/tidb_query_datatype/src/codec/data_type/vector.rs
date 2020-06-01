@@ -6,6 +6,7 @@ use tipb::FieldType;
 use super::scalar::ScalarValueRef;
 use super::*;
 use crate::codec::mysql::decimal::DECIMAL_STRUCT_SIZE;
+use crate::codec::mysql::json::JsonRef;
 use crate::codec::Result;
 
 /// A vector value container, a.k.a. column, for all concrete eval types.
@@ -24,13 +25,48 @@ pub enum VectorValue {
     Json(Vec<Option<Json>>),
 }
 
-pub trait RefVec<T> {
-    fn get_ref(&self, idx: usize) -> Option<&T>;
+impl RefVec<Int> for Vec<Option<Int>> {
+    fn get_ref(&self, idx: usize) -> Option<&Int> {
+        self[idx].as_ref()
+    }
 }
 
-impl<T> RefVec<T> for Vec<Option<T>> {
-    fn get_ref(&self, idx: usize) -> Option<&T> {
+impl RefVec<Real> for Vec<Option<Real>> {
+    fn get_ref(&self, idx: usize) -> Option<&Real> {
         self[idx].as_ref()
+    }
+}
+
+impl RefVec<Decimal> for Vec<Option<Decimal>> {
+    fn get_ref(&self, idx: usize) -> Option<&Decimal> {
+        self[idx].as_ref()
+    }
+}
+
+impl RefVec<DateTime> for Vec<Option<DateTime>> {
+    fn get_ref(&self, idx: usize) -> Option<&DateTime> {
+        self[idx].as_ref()
+    }
+}
+
+impl RefVec<Duration> for Vec<Option<Duration>> {
+    fn get_ref(&self, idx: usize) -> Option<&Duration> {
+        self[idx].as_ref()
+    }
+}
+
+impl BytesRefVec for Vec<Option<Bytes>> {
+    fn get_ref(&self, idx: usize) -> Option<BytesRef> {
+        let x: Option<&Bytes> = self[idx].as_ref();
+        x.map(|x| x.as_slice())
+    }
+}
+
+
+impl JsonRefVec for Vec<Option<Json>> {
+    fn get_ref(&self, idx: usize) -> Option<JsonRef> {
+        let x: Option<&Json> = self[idx].as_ref();
+        x.map(|x| x.as_ref())
     }
 }
 
