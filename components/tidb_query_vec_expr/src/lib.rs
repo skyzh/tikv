@@ -52,6 +52,56 @@ fn map_expr_node_to_rpn_func(expr: &Expr) -> Result<RpnFnMeta> {
     let children = expr.get_children();
     let ft = expr.get_field_type();
     Ok(match value {
+        // impl_cast
+        ScalarFuncSig::CastIntAsInt |
+        ScalarFuncSig::CastIntAsReal |
+        ScalarFuncSig::CastIntAsString |
+        ScalarFuncSig::CastIntAsDecimal |
+        ScalarFuncSig::CastIntAsTime |
+        ScalarFuncSig::CastIntAsDuration |
+        ScalarFuncSig::CastIntAsJson |
+        ScalarFuncSig::CastRealAsInt |
+        ScalarFuncSig::CastRealAsReal |
+        ScalarFuncSig::CastRealAsString |
+        ScalarFuncSig::CastRealAsDecimal |
+        ScalarFuncSig::CastRealAsTime |
+        ScalarFuncSig::CastRealAsDuration |
+        ScalarFuncSig::CastRealAsJson |
+        ScalarFuncSig::CastDecimalAsInt |
+        ScalarFuncSig::CastDecimalAsReal |
+        ScalarFuncSig::CastDecimalAsString |
+        ScalarFuncSig::CastDecimalAsDecimal |
+        ScalarFuncSig::CastDecimalAsTime |
+        ScalarFuncSig::CastDecimalAsDuration |
+        ScalarFuncSig::CastDecimalAsJson |
+        ScalarFuncSig::CastStringAsInt |
+        ScalarFuncSig::CastStringAsReal |
+        ScalarFuncSig::CastStringAsString |
+        ScalarFuncSig::CastStringAsDecimal |
+        ScalarFuncSig::CastStringAsTime |
+        ScalarFuncSig::CastStringAsDuration |
+        ScalarFuncSig::CastStringAsJson |
+        ScalarFuncSig::CastTimeAsInt |
+        ScalarFuncSig::CastTimeAsReal |
+        ScalarFuncSig::CastTimeAsString |
+        ScalarFuncSig::CastTimeAsDecimal |
+        ScalarFuncSig::CastTimeAsTime |
+        ScalarFuncSig::CastTimeAsDuration |
+        ScalarFuncSig::CastTimeAsJson |
+        ScalarFuncSig::CastDurationAsInt |
+        ScalarFuncSig::CastDurationAsReal |
+        ScalarFuncSig::CastDurationAsString |
+        ScalarFuncSig::CastDurationAsDecimal |
+        ScalarFuncSig::CastDurationAsTime |
+        ScalarFuncSig::CastDurationAsDuration |
+        ScalarFuncSig::CastDurationAsJson |
+        ScalarFuncSig::CastJsonAsInt |
+        ScalarFuncSig::CastJsonAsReal |
+        ScalarFuncSig::CastJsonAsString |
+        ScalarFuncSig::CastJsonAsDecimal |
+        ScalarFuncSig::CastJsonAsTime |
+        ScalarFuncSig::CastJsonAsDuration |
+        ScalarFuncSig::CastJsonAsJson => map_cast_func(expr)?,
         // impl_control
         ScalarFuncSig::IfNullInt => if_null_fn_meta::<Int>(),
         ScalarFuncSig::IfNullReal => if_null_fn_meta::<Real>(),
