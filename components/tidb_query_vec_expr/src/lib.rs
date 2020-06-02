@@ -27,20 +27,9 @@ extern crate test;
 
 pub mod types;
 
-pub mod impl_arithmetic;
 pub mod impl_cast;
-pub mod impl_compare;
-pub mod impl_compare_in;
-pub mod impl_control;
 pub mod impl_encryption;
 pub mod impl_json;
-pub mod impl_like;
-pub mod impl_math;
-pub mod impl_miscellaneous;
-pub mod impl_op;
-pub mod impl_other;
-pub mod impl_string;
-pub mod impl_time;
 
 pub use self::types::*;
 
@@ -51,20 +40,9 @@ use tidb_query_common::Result;
 use tidb_query_datatype::codec::collation::*;
 use tidb_query_datatype::codec::data_type::*;
 
-use self::impl_arithmetic::*;
 use self::impl_cast::*;
-use self::impl_compare::*;
-use self::impl_compare_in::*;
-use self::impl_control::*;
 use self::impl_encryption::*;
 use self::impl_json::*;
-use self::impl_like::*;
-use self::impl_math::*;
-use self::impl_miscellaneous::*;
-use self::impl_op::*;
-use self::impl_other::*;
-use self::impl_string::*;
-use self::impl_time::*;
 
 fn map_string_compare_sig<Cmp: CmpOp>(ret_field_type: &FieldType) -> Result<RpnFnMeta> {
     Ok(match_template_collator! {
