@@ -62,7 +62,7 @@ impl<'a, T: BitOp> super::AggrDefinitionParser <'a> for AggrFnDefinitionParserBi
     }
 
     fn parse(
-        &'a self,
+        &self,
         mut aggr_def: Expr,
         ctx: &mut EvalContext,
         // We use the same structure for all data types, so this parameter is not needed.

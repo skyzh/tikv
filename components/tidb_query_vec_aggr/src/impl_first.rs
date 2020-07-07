@@ -22,7 +22,7 @@ impl <'a> super::AggrDefinitionParser<'a> for AggrFnDefinitionParserFirst {
     }
 
     fn parse(
-        &'a self,
+        &self,
         mut aggr_def: Expr,
         ctx: &mut EvalContext,
         src_schema: &[FieldType],
@@ -66,28 +66,12 @@ impl <'a> super::AggrDefinitionParser<'a> for AggrFnDefinitionParserFirst {
 }
 
 /// The FIRST aggregate function.
-// #[derive(Debug, AggrFunction)]
-// #[aggr_function(state = AggrFnStateFirst::<'_, T>::new())]
-#[derive(Debug)]
+#[derive(Debug, AggrFunction)]
+#[aggr_function(state = AggrFnStateFirst::<'_, T>::new())]
 pub struct AggrFnFirst<'a, T>(PhantomData<&'a T>)
 where
     T: EvaluableRef<'a> + 'a,
     VectorValue: VectorValueExt<T::EvaluableType>;
-
-impl<'a, T> crate::AggrFunction<'a> for AggrFnFirst<'a, T>
-where
-    T: EvaluableRef<'a> + 'a,
-    VectorValue: VectorValueExt<T::EvaluableType>,
-{
-    #[inline]
-    fn name(&self) -> &'static str {
-        "AggrFnFirst"
-    }
-    #[inline]
-    fn create_state(&self) -> Box<dyn crate::AggrFunctionState<'a> + 'a> {
-        Box::new(AggrFnStateFirst::<'a, T>::new())
-    }
-}
 
 impl<'a, T> AggrFnFirst<'a, T>
 where

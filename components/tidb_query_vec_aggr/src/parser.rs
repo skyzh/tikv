@@ -14,7 +14,7 @@ use tidb_query_vec_expr::RpnExpression;
 /// All aggregate function implementations should include an impl for this trait as well as
 /// add a match arm in `map_pb_sig_to_aggr_func_parser` so that the aggregate function can be
 /// actually utilized.
-pub trait AggrDefinitionParser <'a>{
+pub trait AggrDefinitionParser <'a> {
     /// Checks whether the inner expression of the aggregate function definition is supported.
     /// It is ensured that `aggr_def.tp` maps the current parser instance.
     fn check_supported(&self, aggr_def: &Expr) -> Result<()>;
@@ -32,7 +32,7 @@ pub trait AggrDefinitionParser <'a>{
     ///
     /// May panic if the aggregate function definition is not supported by this parser.
     fn parse(
-        &'a self,
+        &self,
         aggr_def: Expr,
         ctx: &mut EvalContext,
         src_schema: &[FieldType],
@@ -85,7 +85,7 @@ impl <'a> AggrDefinitionParser <'a> for AllAggrDefinitionParser {
     /// May panic if the aggregate function definition is not supported.
     #[inline]
     fn parse(
-        &'a self,
+        &self,
         aggr_def: Expr,
         ctx: &mut EvalContext,
         src_schema: &[FieldType],

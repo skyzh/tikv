@@ -21,7 +21,7 @@ impl <'a> super::AggrDefinitionParser <'a> for AggrFnDefinitionParserCount {
     }
 
     fn parse(
-        &'a self,
+        &self,
         mut aggr_def: Expr,
         ctx: &mut EvalContext,
         // We use the same structure for all data types, so this parameter is not needed.

@@ -22,7 +22,7 @@ impl <'a> super::AggrDefinitionParser <'a> for AggrFnDefinitionParserAvg {
     }
 
     fn parse(
-        &'a self,
+        &self,
         mut aggr_def: Expr,
         ctx: &mut EvalContext,
         src_schema: &[FieldType],

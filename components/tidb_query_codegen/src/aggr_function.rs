@@ -43,7 +43,7 @@ impl AggrFunctionOpts {
         }
         let (_, ty_generics, where_clause) = self.generics.split_for_impl();
         let (impl_generics, _, _) = generics.split_for_impl();
-        let x = quote! {
+        quote! {
             impl #impl_generics crate::AggrFunction <'a> for #ident #ty_generics #where_clause {
                 #[inline]
                 fn name(&self) -> &'static str {
@@ -55,8 +55,6 @@ impl AggrFunctionOpts {
                     Box::new(#state_expr)
                 }
             }
-        };
-        println!("{}", x);
-        x
+        }
     }
 }

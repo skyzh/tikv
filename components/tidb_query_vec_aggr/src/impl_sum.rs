@@ -21,7 +21,7 @@ impl <'a> super::parser::AggrDefinitionParser <'a>for AggrFnDefinitionParserSum 
     }
 
     fn parse(
-        &'a self,
+        &self,
         mut aggr_def: Expr,
         ctx: &mut EvalContext,
         src_schema: &[FieldType],
