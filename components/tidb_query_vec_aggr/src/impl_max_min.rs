@@ -7,6 +7,7 @@ use tidb_query_codegen::AggrFunction;
 use tidb_query_datatype::{Collation, EvalType, FieldTypeAccessor};
 use tipb::{Expr, ExprType, FieldType};
 
+use super::*;
 use tidb_query_common::Result;
 use tidb_query_datatype::codec::collation::*;
 use tidb_query_datatype::codec::data_type::*;
@@ -44,7 +45,7 @@ impl<T: Extremum> AggrFnDefinitionParserExtremum<T> {
     }
 }
 
-impl<T: Extremum> super::AggrDefinitionParser for AggrFnDefinitionParserExtremum<T> {
+impl<'a, T: Extremum> super::AggrDefinitionParser <'a> for AggrFnDefinitionParserExtremum<T> {
     fn check_supported(&self, aggr_def: &Expr) -> Result<()> {
         assert_eq!(aggr_def.get_tp(), T::TP);
         super::util::check_aggr_exp_supported_one_child(aggr_def)
@@ -58,7 +59,7 @@ impl<T: Extremum> super::AggrDefinitionParser for AggrFnDefinitionParserExtremum
         src_schema: &[FieldType],
         out_schema: &mut Vec<FieldType>,
         out_exp: &mut Vec<RpnExpression>,
-    ) -> Result<Box<dyn super::AggrFunction>> {
+    ) -> Result<Box<dyn super::AggrFunction<'a> + 'a>> {
         assert_eq!(aggr_def.get_tp(), T::TP);
         let child = aggr_def.take_children().into_iter().next().unwrap();
         let eval_type = EvalType::try_from(child.get_field_type().as_accessor().tp()).unwrap();
@@ -90,9 +91,12 @@ impl<T: Extremum> super::AggrDefinitionParser for AggrFnDefinitionParserExtremum
             };
         }
 
-        match_template_evaluable! {
-            TT, match eval_type {
-                EvalType::TT => Ok(Box::new(AggFnExtremum::<TT, T>::new()))
+        match_template::match_template! {
+            TT = [Int, Real, Duration, Decimal, DateTime],
+            match eval_type {
+                EvalType::TT => Ok(Box::new(AggFnExtremum::<'_, &TT, T>::new())),
+                EvalType::Json => Ok(Box::new(AggFnExtremum::<'_, BytesRef<'static>, T>::new())),
+                EvalType::Bytes => Ok(Box::new(AggFnExtremum::<'_, JsonRef<'static>, T>::new()))
             }
         }
     }
@@ -147,31 +151,31 @@ where
     }
 }
 
-impl<C, E> super::ConcreteAggrFunctionState for AggFnStateExtremum4Bytes<C, E>
+impl<'a, C, E> super::ConcreteAggrFunctionState<'a> for AggFnStateExtremum4Bytes<C, E>
 where
     VectorValue: VectorValueExt<Bytes>,
     C: Collator,
     E: Extremum,
 {
-    type ParameterType = Bytes;
+    type ParameterType = BytesRef<'a>;
 
     #[inline]
-    fn update_concrete(
+    unsafe fn update_concrete_unsafe(
         &mut self,
         _ctx: &mut EvalContext,
-        value: &Option<Self::ParameterType>,
+        value: Option<Self::ParameterType>,
     ) -> Result<()> {
         if value.is_none() {
             return Ok(());
         }
 
         if self.extremum.is_none() {
-            self.extremum = value.clone();
+            self.extremum = value.map(|x| x.to_owned_value());
             return Ok(());
         }
 
         if C::sort_compare(&self.extremum.as_ref().unwrap(), &value.as_ref().unwrap())? == E::ORD {
-            self.extremum = value.clone();
+            self.extremum = value.map(|x| x.to_owned_value());
         }
         Ok(())
     }
@@ -185,21 +189,21 @@ where
 
 /// The MAX/MIN aggregate functions.
 #[derive(Debug, AggrFunction)]
-#[aggr_function(state = AggFnStateExtremum::<T, E>::new())]
-pub struct AggFnExtremum<T, E>
+#[aggr_function(state = AggFnStateExtremum::<'a, T, E>::new())]
+pub struct AggFnExtremum<'a, T, E>
 where
-    T: EvaluableRet + Ord,
+    T: EvaluableRef<'a> + 'a + Ord,
     E: Extremum,
-    VectorValue: VectorValueExt<T>,
+    VectorValue: VectorValueExt<T::EvaluableType>,
 {
-    _phantom: std::marker::PhantomData<(T, E)>,
+    _phantom: std::marker::PhantomData<(&'a T, E)>,
 }
 
-impl<T, E> AggFnExtremum<T, E>
+impl<'a, T, E> AggFnExtremum<'a, T, E>
 where
-    T: EvaluableRet + Ord,
+    T: EvaluableRef<'a> + 'a + Ord,
     E: Extremum,
-    VectorValue: VectorValueExt<T>,
+    VectorValue: VectorValueExt<T::EvaluableType>,
 {
     fn new() -> Self {
         Self {
@@ -210,21 +214,21 @@ where
 
 /// The state of the MAX/MIN aggregate function.
 #[derive(Debug)]
-pub struct AggFnStateExtremum<T, E>
+pub struct AggFnStateExtremum<'a, T, E>
 where
-    T: EvaluableRet + Ord,
+    T: EvaluableRef<'a> + 'a + Ord,
     E: Extremum,
-    VectorValue: VectorValueExt<T>,
+    VectorValue: VectorValueExt<T::EvaluableType>,
 {
-    extremum_value: Option<T>,
+    extremum_value: Option<T::EvaluableType>,
     _phantom: std::marker::PhantomData<E>,
 }
 
-impl<T, E> AggFnStateExtremum<T, E>
+impl<'a, T, E> AggFnStateExtremum<'a, T, E>
 where
-    T: EvaluableRet + Ord,
+    T: EvaluableRef<'a> + 'a + Ord,
     E: Extremum,
-    VectorValue: VectorValueExt<T>,
+    VectorValue: VectorValueExt<T::EvaluableType>,
 {
     pub fn new() -> Self {
         Self {
@@ -234,24 +238,27 @@ where
     }
 }
 
-impl<T, E> super::ConcreteAggrFunctionState for AggFnStateExtremum<T, E>
+impl<'a, T, E> super::ConcreteAggrFunctionState<'a> for AggFnStateExtremum<'a, T, E>
 where
-    T: EvaluableRet + Ord,
+    T: EvaluableRef<'a> + 'a + Ord,
     E: Extremum,
-    VectorValue: VectorValueExt<T>,
+    VectorValue: VectorValueExt<T::EvaluableType>,
 {
     type ParameterType = T;
 
     #[inline]
-    fn update_concrete(
+    unsafe fn update_concrete_unsafe(
         &mut self,
         _ctx: &mut EvalContext,
-        value: &Option<Self::ParameterType>,
+        value: Option<Self::ParameterType>,
     ) -> Result<()> {
+        let extreme_ref: Option<&'static T::EvaluableType> =
+            self.extremum_value.as_ref().map(|x| std::mem::transmute(x));
         if value.is_some()
-            && (self.extremum_value.is_none() || self.extremum_value.cmp(value) == E::ORD)
+            && (self.extremum_value.is_none()
+                || extreme_ref.map(|x| T::from_owned_value(x)).cmp(&value) == E::ORD)
         {
-            self.extremum_value = value.clone();
+            self.extremum_value = value.map(|x| x.to_owned_value());
         }
         Ok(())
     }
@@ -277,7 +284,7 @@ mod tests {
     #[test]
     fn test_max() {
         let mut ctx = EvalContext::default();
-        let function = AggFnExtremum::<Int, Max>::new();
+        let function = AggFnExtremum::<&'static Int, Max>::new();
         let mut state = function.create_state();
 
         let mut result = [VectorValue::with_capacity(0, EvalType::Int)];
@@ -285,40 +292,42 @@ mod tests {
         state.push_result(&mut ctx, &mut result).unwrap();
         assert_eq!(result[0].as_int_slice(), &[None]);
 
-        state.update(&mut ctx, &Option::<Int>::None).unwrap();
+        update!(state, &mut ctx, Option::<&Int>::None).unwrap();
         result[0].clear();
         state.push_result(&mut ctx, &mut result).unwrap();
         assert_eq!(result[0].as_int_slice(), &[None]);
 
-        state.update(&mut ctx, &Some(7i64)).unwrap();
+        update!(state, &mut ctx, Some(&7i64)).unwrap();
         result[0].clear();
         state.push_result(&mut ctx, &mut result).unwrap();
         assert_eq!(result[0].as_int_slice(), &[Some(7)]);
 
-        state.update(&mut ctx, &Some(4i64)).unwrap();
+        update!(state, &mut ctx, Some(&4i64)).unwrap();
         result[0].clear();
         state.push_result(&mut ctx, &mut result).unwrap();
         assert_eq!(result[0].as_int_slice(), &[Some(7)]);
 
-        state.update_repeat(&mut ctx, &Some(20), 10).unwrap();
-        state
-            .update_repeat(&mut ctx, &Option::<Int>::None, 7)
-            .unwrap();
+        update_repeat!(state, &mut ctx, Some(&20), 10).unwrap();
+        update_repeat!(state, &mut ctx, Option::<&Int>::None, 7).unwrap();
 
         result[0].clear();
         state.push_result(&mut ctx, &mut result).unwrap();
         assert_eq!(result[0].as_int_slice(), &[Some(20)]);
 
         // update vector
-        state.update(&mut ctx, &Some(7i64)).unwrap();
-        state
-            .update_vector(&mut ctx, &[Some(21i64), None, Some(22i64)], &[0, 1, 2])
-            .unwrap();
+        update!(state, &mut ctx, Some(&7i64)).unwrap();
+        update_vector!(
+            state,
+            &mut ctx,
+            &NotChunkedVec::from_slice(&[Some(21i64), None, Some(22i64)]),
+            &[0, 1, 2]
+        )
+        .unwrap();
         result[0].clear();
         state.push_result(&mut ctx, &mut result).unwrap();
         assert_eq!(result[0].as_int_slice(), &[Some(22)]);
 
-        state.update(&mut ctx, &Some(40i64)).unwrap();
+        update!(state, &mut ctx, Some(&40i64)).unwrap();
         result[0].clear();
         state.push_result(&mut ctx, &mut result).unwrap();
         assert_eq!(result[0].as_int_slice(), &[Some(40)]);
@@ -327,7 +336,7 @@ mod tests {
     #[test]
     fn test_min() {
         let mut ctx = EvalContext::default();
-        let function = AggFnExtremum::<Int, Min>::new();
+        let function = AggFnExtremum::<&'static Int, Min>::new();
         let mut state = function.create_state();
 
         let mut result = [VectorValue::with_capacity(0, EvalType::Int)];
@@ -335,45 +344,47 @@ mod tests {
         state.push_result(&mut ctx, &mut result).unwrap();
         assert_eq!(result[0].as_int_slice(), &[None]);
 
-        state.update(&mut ctx, &Option::<Int>::None).unwrap();
+        update!(state, &mut ctx, Option::<&Int>::None).unwrap();
         result[0].clear();
         state.push_result(&mut ctx, &mut result).unwrap();
         assert_eq!(result[0].as_int_slice(), &[None]);
 
-        state.update(&mut ctx, &Some(100i64)).unwrap();
+        update!(state, &mut ctx, Some(&100i64)).unwrap();
         result[0].clear();
         state.push_result(&mut ctx, &mut result).unwrap();
         assert_eq!(result[0].as_int_slice(), &[Some(100)]);
 
-        state.update(&mut ctx, &Some(90i64)).unwrap();
+        update!(state, &mut ctx, Some(&90i64)).unwrap();
         result[0].clear();
         state.push_result(&mut ctx, &mut result).unwrap();
         assert_eq!(result[0].as_int_slice(), &[Some(90)]);
 
-        state.update_repeat(&mut ctx, &Some(80), 10).unwrap();
-        state
-            .update_repeat(&mut ctx, &Option::<Int>::None, 10)
-            .unwrap();
+        update_repeat!(state, &mut ctx, Some(&80), 10).unwrap();
+        update_repeat!(state, &mut ctx, Option::<&Int>::None, 10).unwrap();
 
         result[0].clear();
         state.push_result(&mut ctx, &mut result).unwrap();
         assert_eq!(result[0].as_int_slice(), &[Some(80)]);
 
         // update vector
-        state.update(&mut ctx, &Some(70i64)).unwrap();
-        state
-            .update_vector(&mut ctx, &[Some(69i64), None, Some(68i64)], &[0, 1, 2])
-            .unwrap();
+        update!(state, &mut ctx, Some(&70i64)).unwrap();
+        update_vector!(
+            state,
+            &mut ctx,
+            &NotChunkedVec::from_slice(&[Some(69i64), None, Some(68i64)]),
+            &[0, 1, 2]
+        )
+        .unwrap();
         result[0].clear();
         state.push_result(&mut ctx, &mut result).unwrap();
         assert_eq!(result[0].as_int_slice(), &[Some(68)]);
 
-        state.update(&mut ctx, &Some(2i64)).unwrap();
+        update!(state, &mut ctx, Some(&2i64)).unwrap();
         result[0].clear();
         state.push_result(&mut ctx, &mut result).unwrap();
         assert_eq!(result[0].as_int_slice(), &[Some(2)]);
 
-        state.update(&mut ctx, &Some(-1i64)).unwrap();
+        update!(state, &mut ctx, Some(&-1i64)).unwrap();
         result[0].clear();
         state.push_result(&mut ctx, &mut result).unwrap();
         assert_eq!(result[0].as_int_slice(), &[Some(-1i64)]);
@@ -410,9 +421,12 @@ mod tests {
             assert_eq!(result[0].as_bytes_slice(), &[None]);
 
             for arg in args {
-                state
-                    .update(&mut ctx, &Some(String::from(arg).into_bytes()))
-                    .unwrap();
+                update!(
+                    state,
+                    &mut ctx,
+                    Some(&String::from(arg).into_bytes() as BytesRef)
+                )
+                .unwrap();
             }
             result[0].clear();
             state.push_result(&mut ctx, &mut result).unwrap();
@@ -484,9 +498,13 @@ mod tests {
                 .unwrap();
             let max_result = max_result.vector_value().unwrap();
             let max_slice: &[Option<Int>] = max_result.as_ref().as_ref();
-            max_state
-                .update_vector(&mut ctx, max_slice, max_result.logical_rows())
-                .unwrap();
+            update_vector!(
+                max_state,
+                &mut ctx,
+                &NotChunkedVec::from_slice(max_slice),
+                max_result.logical_rows()
+            )
+            .unwrap();
             max_state.push_result(&mut ctx, &mut aggr_result).unwrap();
         }
 
@@ -497,9 +515,13 @@ mod tests {
                 .unwrap();
             let min_result = min_result.vector_value().unwrap();
             let min_slice: &[Option<Int>] = min_result.as_ref().as_ref();
-            min_state
-                .update_vector(&mut ctx, min_slice, min_result.logical_rows())
-                .unwrap();
+            update_vector!(
+                min_state,
+                &mut ctx,
+                &NotChunkedVec::from_slice(min_slice),
+                min_result.logical_rows()
+            )
+            .unwrap();
             min_state.push_result(&mut ctx, &mut aggr_result).unwrap();
         }
 

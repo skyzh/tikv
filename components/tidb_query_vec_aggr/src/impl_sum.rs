@@ -5,6 +5,7 @@ use tidb_query_datatype::EvalType;
 use tipb::{Expr, ExprType, FieldType};
 
 use super::summable::Summable;
+use super::*;
 use tidb_query_common::Result;
 use tidb_query_datatype::codec::data_type::*;
 use tidb_query_datatype::expr::EvalContext;
@@ -13,7 +14,7 @@ use tidb_query_vec_expr::{RpnExpression, RpnExpressionBuilder};
 /// The parser for SUM aggregate function.
 pub struct AggrFnDefinitionParserSum;
 
-impl super::parser::AggrDefinitionParser for AggrFnDefinitionParserSum {
+impl <'a> super::parser::AggrDefinitionParser <'a>for AggrFnDefinitionParserSum {
     fn check_supported(&self, aggr_def: &Expr) -> Result<()> {
         assert_eq!(aggr_def.get_tp(), ExprType::Sum);
         super::util::check_aggr_exp_supported_one_child(aggr_def)
@@ -26,7 +27,7 @@ impl super::parser::AggrDefinitionParser for AggrFnDefinitionParserSum {
         src_schema: &[FieldType],
         out_schema: &mut Vec<FieldType>,
         out_exp: &mut Vec<RpnExpression>,
-    ) -> Result<Box<dyn super::AggrFunction>> {
+    ) -> Result<Box<dyn super::AggrFunction<'a> + 'a>> {
         use std::convert::TryFrom;
         use tidb_query_datatype::FieldTypeAccessor;
 
@@ -113,15 +114,19 @@ where
     }
 }
 
-impl<T> super::ConcreteAggrFunctionState for AggrFnStateSum<T>
+impl<'a, T> super::ConcreteAggrFunctionState<'a> for AggrFnStateSum<T>
 where
     T: Summable,
     VectorValue: VectorValueExt<T>,
 {
-    type ParameterType = T;
+    type ParameterType = &'a T;
 
     #[inline]
-    fn update_concrete(&mut self, ctx: &mut EvalContext, value: &Option<T>) -> Result<()> {
+    unsafe fn update_concrete_unsafe(
+        &mut self,
+        ctx: &mut EvalContext,
+        value: Option<&'a T>,
+    ) -> Result<()> {
         match value {
             None => Ok(()),
             Some(value) => {
@@ -192,9 +197,8 @@ mod tests {
             .unwrap();
         let exp_result = exp_result.vector_value().unwrap();
         let slice: &[Option<Real>] = exp_result.as_ref().as_ref();
-        state
-            .update_vector(&mut ctx, slice, exp_result.logical_rows())
-            .unwrap();
+        let chunked_vec = NotChunkedVec::from_slice(slice);
+        update_vector!(state, &mut ctx, &chunked_vec, exp_result.logical_rows()).unwrap();
 
         let mut aggr_result = [VectorValue::with_capacity(0, EvalType::Real)];
         state.push_result(&mut ctx, &mut aggr_result).unwrap();

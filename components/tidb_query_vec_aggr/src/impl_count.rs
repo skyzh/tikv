@@ -5,6 +5,7 @@ use tidb_query_datatype::builder::FieldTypeBuilder;
 use tidb_query_datatype::{FieldTypeFlag, FieldTypeTp};
 use tipb::{Expr, ExprType, FieldType};
 
+use super::*;
 use tidb_query_common::Result;
 use tidb_query_datatype::codec::data_type::*;
 use tidb_query_datatype::expr::EvalContext;
@@ -13,7 +14,7 @@ use tidb_query_vec_expr::{RpnExpression, RpnExpressionBuilder};
 /// The parser for COUNT aggregate function.
 pub struct AggrFnDefinitionParserCount;
 
-impl super::AggrDefinitionParser for AggrFnDefinitionParserCount {
+impl <'a> super::AggrDefinitionParser <'a> for AggrFnDefinitionParserCount {
     fn check_supported(&self, aggr_def: &Expr) -> Result<()> {
         assert_eq!(aggr_def.get_tp(), ExprType::Count);
         super::util::check_aggr_exp_supported_one_child(aggr_def)
@@ -27,7 +28,7 @@ impl super::AggrDefinitionParser for AggrFnDefinitionParserCount {
         src_schema: &[FieldType],
         out_schema: &mut Vec<FieldType>,
         out_exp: &mut Vec<RpnExpression>,
-    ) -> Result<Box<dyn super::AggrFunction>> {
+    ) -> Result<Box<dyn super::AggrFunction<'a> + 'a>> {
         assert_eq!(aggr_def.get_tp(), ExprType::Count);
         let child = aggr_def.take_children().into_iter().next().unwrap();
 
@@ -71,9 +72,9 @@ impl AggrFnStateCount {
 // `update_vector` can be faster. Also note that we support all kind of
 // `AggrFunctionStateUpdatePartial` for the COUNT aggregate function.
 
-impl<T: EvaluableRet> super::AggrFunctionStateUpdatePartial<T> for AggrFnStateCount {
+impl<'a, T: EvaluableRef<'a>> super::AggrFunctionStateUpdatePartial<'a, T> for AggrFnStateCount {
     #[inline]
-    fn update(&mut self, _ctx: &mut EvalContext, value: &Option<T>) -> Result<()> {
+    unsafe fn update_unsafe(&mut self, _ctx: &mut EvalContext, value: Option<T>) -> Result<()> {
         if value.is_some() {
             self.count += 1;
         }
@@ -81,10 +82,10 @@ impl<T: EvaluableRet> super::AggrFunctionStateUpdatePartial<T> for AggrFnStateCo
     }
 
     #[inline]
-    fn update_repeat(
+    unsafe fn update_repeat_unsafe(
         &mut self,
         _ctx: &mut EvalContext,
-        value: &Option<T>,
+        value: Option<T>,
         repeat_times: usize,
     ) -> Result<()> {
         // Will be used for expressions like `COUNT(1)`.
@@ -95,15 +96,16 @@ impl<T: EvaluableRet> super::AggrFunctionStateUpdatePartial<T> for AggrFnStateCo
     }
 
     #[inline]
-    fn update_vector(
+    unsafe fn update_vector_unsafe(
         &mut self,
         _ctx: &mut EvalContext,
-        physical_values: &[Option<T>],
+        _phantom_data: Option<T>,
+        physical_values: T::ChunkedType,
         logical_rows: &[usize],
     ) -> Result<()> {
         // Will be used for expressions like `COUNT(col)`.
         for physical_index in logical_rows {
-            if physical_values[*physical_index].is_some() {
+            if physical_values.get_option_ref(*physical_index).is_some() {
                 self.count += 1;
             }
         }
@@ -111,7 +113,7 @@ impl<T: EvaluableRet> super::AggrFunctionStateUpdatePartial<T> for AggrFnStateCo
     }
 }
 
-impl super::AggrFunctionState for AggrFnStateCount {
+impl <'a> super::AggrFunctionState<'a> for AggrFnStateCount {
     #[inline]
     fn push_result(&self, _ctx: &mut EvalContext, target: &mut [VectorValue]) -> Result<()> {
         assert_eq!(target.len(), 1);
@@ -138,32 +140,29 @@ mod tests {
         state.push_result(&mut ctx, &mut result).unwrap();
         assert_eq!(result[0].as_int_slice(), &[Some(0)]);
 
-        state.update(&mut ctx, &Option::<Real>::None).unwrap();
+        update!(state, &mut ctx, Option::<&Real>::None).unwrap();
 
         result[0].clear();
         state.push_result(&mut ctx, &mut result).unwrap();
         assert_eq!(result[0].as_int_slice(), &[Some(0)]);
 
-        state.update(&mut ctx, &Real::new(5.0).ok()).unwrap();
-        state.update(&mut ctx, &Option::<Real>::None).unwrap();
-        state.update(&mut ctx, &Some(7i64)).unwrap();
+        update!(state, &mut ctx, Real::new(5.0).ok().as_ref()).unwrap();
+        update!(state, &mut ctx, Option::<&Real>::None).unwrap();
+        update!(state, &mut ctx, Some(&7i64)).unwrap();
 
         result[0].clear();
         state.push_result(&mut ctx, &mut result).unwrap();
         assert_eq!(result[0].as_int_slice(), &[Some(2)]);
 
-        state.update_repeat(&mut ctx, &Some(3i64), 4).unwrap();
-        state
-            .update_repeat(&mut ctx, &Option::<Int>::None, 7)
-            .unwrap();
+        update_repeat!(state, &mut ctx, Some(&3i64), 4).unwrap();
+        update_repeat!(state, &mut ctx, Option::<&Int>::None, 7).unwrap();
 
         result[0].clear();
         state.push_result(&mut ctx, &mut result).unwrap();
         assert_eq!(result[0].as_int_slice(), &[Some(6)]);
 
-        state
-            .update_vector(&mut ctx, &[Some(1i64), None, Some(-1i64)], &[1, 2])
-            .unwrap();
+        let chunked_vec: NotChunkedVec<Int> = vec![Some(1i64), None, Some(-1i64)].into();
+        update_vector!(state, &mut ctx, &chunked_vec, &[1, 2]).unwrap();
 
         result[0].clear();
         state.push_result(&mut ctx, &mut result).unwrap();

@@ -6,6 +6,7 @@ use tidb_query_codegen::AggrFunction;
 use tidb_query_datatype::EvalType;
 use tipb::{Expr, ExprType, FieldType};
 
+use super::*;
 use tidb_query_common::Result;
 use tidb_query_datatype::codec::data_type::*;
 use tidb_query_datatype::expr::EvalContext;
@@ -14,7 +15,7 @@ use tidb_query_vec_expr::{RpnExpression, RpnExpressionBuilder};
 /// The parser for FIRST aggregate function.
 pub struct AggrFnDefinitionParserFirst;
 
-impl super::AggrDefinitionParser for AggrFnDefinitionParserFirst {
+impl <'a> super::AggrDefinitionParser<'a> for AggrFnDefinitionParserFirst {
     fn check_supported(&self, aggr_def: &Expr) -> Result<()> {
         assert_eq!(aggr_def.get_tp(), ExprType::First);
         super::util::check_aggr_exp_supported_one_child(aggr_def)
@@ -27,7 +28,7 @@ impl super::AggrDefinitionParser for AggrFnDefinitionParserFirst {
         src_schema: &[FieldType],
         out_schema: &mut Vec<FieldType>,
         out_exp: &mut Vec<RpnExpression>,
-    ) -> Result<Box<dyn super::AggrFunction>> {
+    ) -> Result<Box<dyn super::AggrFunction<'a> + 'a>> {
         use std::convert::TryFrom;
         use tidb_query_datatype::FieldTypeAccessor;
 
@@ -53,9 +54,12 @@ impl super::AggrDefinitionParser for AggrFnDefinitionParserFirst {
             src_schema.len(),
         )?);
 
-        match_template_evaluable! {
-            TT, match eval_type {
-                EvalType::TT => Ok(Box::new(AggrFnFirst::<TT>::new()))
+        match_template::match_template! {
+            TT = [Int, Real, Duration, Decimal, DateTime],
+            match eval_type {
+                EvalType::TT => Ok(Box::new(AggrFnFirst::<'_, &TT>::new())),
+                EvalType::Json => Ok(Box::new(AggrFnFirst::<'_, JsonRef>::new())),
+                EvalType::Bytes => Ok(Box::new(AggrFnFirst::<'_, BytesRef>::new())),
             }
         }
     }
@@ -63,16 +67,16 @@ impl super::AggrDefinitionParser for AggrFnDefinitionParserFirst {
 
 /// The FIRST aggregate function.
 #[derive(Debug, AggrFunction)]
-#[aggr_function(state = AggrFnStateFirst::<T>::new())]
-pub struct AggrFnFirst<T>(PhantomData<T>)
+#[aggr_function(state = AggrFnStateFirst::<'_, T>::new())]
+pub struct AggrFnFirst<'a, T>(PhantomData<&'a T>)
 where
-    T: EvaluableRet,
-    VectorValue: VectorValueExt<T>;
+    T: EvaluableRef<'a> + 'a,
+    VectorValue: VectorValueExt<T::EvaluableType>;
 
-impl<T> AggrFnFirst<T>
+impl<'a, T> AggrFnFirst<'a, T>
 where
-    T: EvaluableRet,
-    VectorValue: VectorValueExt<T>,
+    T: EvaluableRef<'a> + 'a,
+    VectorValue: VectorValueExt<T::EvaluableType>,
 {
     fn new() -> Self {
         AggrFnFirst(PhantomData)
@@ -81,19 +85,19 @@ where
 
 /// The state of the FIRST aggregate function.
 #[derive(Debug)]
-pub enum AggrFnStateFirst<T>
+pub enum AggrFnStateFirst<'a, T>
 where
-    T: EvaluableRet,
-    VectorValue: VectorValueExt<T>,
+    T: EvaluableRef<'a> + 'a,
+    VectorValue: VectorValueExt<T::EvaluableType>,
 {
     Empty,
-    Valued(Option<T>),
+    Valued(Option<T::EvaluableType>),
 }
 
-impl<T> AggrFnStateFirst<T>
+impl<'a, T> AggrFnStateFirst<'a, T>
 where
-    T: EvaluableRet,
-    VectorValue: VectorValueExt<T>,
+    T: EvaluableRef<'a> + 'a,
+    VectorValue: VectorValueExt<T::EvaluableType>,
 {
     pub fn new() -> Self {
         AggrFnStateFirst::Empty
@@ -102,40 +106,43 @@ where
 
 // Here we manually implement `AggrFunctionStateUpdatePartial` instead of implementing
 // `ConcreteAggrFunctionState` so that `update_repeat` and `update_vector` can be faster.
-impl<T> super::AggrFunctionStateUpdatePartial<T> for AggrFnStateFirst<T>
+impl<'a, T> super::AggrFunctionStateUpdatePartial<'a, T> for AggrFnStateFirst<'a, T>
 where
-    T: EvaluableRet,
-    VectorValue: VectorValueExt<T>,
+    T: EvaluableRef<'a> + 'a,
+    VectorValue: VectorValueExt<T::EvaluableType>,
 {
+    // ChunkedType has been implemented in AggrFunctionStateUpdatePartial<T1> for AggrFnStateFirst<T2>
+
     #[inline]
-    fn update(&mut self, _ctx: &mut EvalContext, value: &Option<T>) -> Result<()> {
+    unsafe fn update_unsafe(&mut self, _ctx: &mut EvalContext, value: Option<T>) -> Result<()> {
         if let AggrFnStateFirst::Empty = self {
             // TODO: avoid this clone
-            *self = AggrFnStateFirst::Valued(value.as_ref().cloned());
+            *self = AggrFnStateFirst::Valued(value.map(|x| x.to_owned_value()));
         }
         Ok(())
     }
 
     #[inline]
-    fn update_repeat(
+    unsafe fn update_repeat_unsafe(
         &mut self,
         ctx: &mut EvalContext,
-        value: &Option<T>,
+        value: Option<T>,
         repeat_times: usize,
     ) -> Result<()> {
         assert!(repeat_times > 0);
-        self.update(ctx, value)
+        self.update_unsafe(ctx, value)
     }
 
     #[inline]
-    fn update_vector(
+    unsafe fn update_vector_unsafe(
         &mut self,
         ctx: &mut EvalContext,
-        physical_values: &[Option<T>],
+        _phantom_data: Option<T>,
+        physical_values: T::ChunkedType,
         logical_rows: &[usize],
     ) -> Result<()> {
         if let Some(physical_index) = logical_rows.first() {
-            self.update(ctx, &physical_values[*physical_index])?;
+            self.update_unsafe(ctx, physical_values.get_option_ref(*physical_index))?;
         }
         Ok(())
     }
@@ -143,42 +150,47 @@ where
 
 // In order to make `AggrFnStateFirst` satisfy the `AggrFunctionState` trait, we default impl all
 // `AggrFunctionStateUpdatePartial` of `Evaluable` for all `AggrFnStateFirst`.
-impl<T1, T2> super::AggrFunctionStateUpdatePartial<T1> for AggrFnStateFirst<T2>
+impl<'a, 'b, T1, T2> super::AggrFunctionStateUpdatePartial<'a, T1> for AggrFnStateFirst<'b, T2>
 where
-    T1: EvaluableRet,
-    T2: EvaluableRet,
-    VectorValue: VectorValueExt<T2>,
+    T1: EvaluableRef<'a> + 'a,
+    T2: EvaluableRef<'b> + 'b,
+    VectorValue: VectorValueExt<T2::EvaluableType>,
 {
     #[inline]
-    default fn update(&mut self, _ctx: &mut EvalContext, _value: &Option<T1>) -> Result<()> {
+    default unsafe fn update_unsafe(
+        &mut self,
+        _ctx: &mut EvalContext,
+        _value: Option<T1>,
+    ) -> Result<()> {
         panic!("Unmatched parameter type")
     }
 
     #[inline]
-    default fn update_repeat(
+    default unsafe fn update_repeat_unsafe(
         &mut self,
         _ctx: &mut EvalContext,
-        _value: &Option<T1>,
+        _value: Option<T1>,
         _repeat_times: usize,
     ) -> Result<()> {
         panic!("Unmatched parameter type")
     }
 
     #[inline]
-    default fn update_vector(
+    default unsafe fn update_vector_unsafe(
         &mut self,
         _ctx: &mut EvalContext,
-        _physical_values: &[Option<T1>],
+        _phantom_data: Option<T1>,
+        _physical_values: T1::ChunkedType,
         _logical_rows: &[usize],
     ) -> Result<()> {
         panic!("Unmatched parameter type")
     }
 }
 
-impl<T> super::AggrFunctionState for AggrFnStateFirst<T>
+impl<'a, T> super::AggrFunctionState<'a> for AggrFnStateFirst<'a, T>
 where
-    T: EvaluableRet,
-    VectorValue: VectorValueExt<T>,
+    T: EvaluableRef<'a> + 'a,
+    VectorValue: VectorValueExt<T::EvaluableType>,
 {
     fn push_result(&self, _ctx: &mut EvalContext, target: &mut [VectorValue]) -> Result<()> {
         assert_eq!(target.len(), 1);
@@ -205,18 +217,18 @@ mod tests {
     #[test]
     fn test_update() {
         let mut ctx = EvalContext::default();
-        let function = AggrFnFirst::<Int>::new();
+        let function = AggrFnFirst::<&'static Int>::new();
         let mut state = function.create_state();
 
         let mut result = [VectorValue::with_capacity(0, EvalType::Int)];
         state.push_result(&mut ctx, &mut result[..]).unwrap();
         assert_eq!(result[0].as_int_slice(), &[None]);
 
-        state.update(&mut ctx, &Some(1)).unwrap();
+        update!(state, &mut ctx, Some(&1)).unwrap();
         state.push_result(&mut ctx, &mut result[..]).unwrap();
         assert_eq!(result[0].as_int_slice(), &[None, Some(1)]);
 
-        state.update(&mut ctx, &Some(2)).unwrap();
+        update!(state, &mut ctx, Some(&2)).unwrap();
         state.push_result(&mut ctx, &mut result[..]).unwrap();
         assert_eq!(result[0].as_int_slice(), &[None, Some(1), Some(1)]);
     }
@@ -224,16 +236,16 @@ mod tests {
     #[test]
     fn test_update_repeat() {
         let mut ctx = EvalContext::default();
-        let function = AggrFnFirst::<Bytes>::new();
+        let function = AggrFnFirst::<BytesRef<'static>>::new();
         let mut state = function.create_state();
 
         let mut result = [VectorValue::with_capacity(0, EvalType::Bytes)];
 
-        state.update_repeat(&mut ctx, &Some(vec![1]), 2).unwrap();
+        update_repeat!(state, &mut ctx, Some(&[1u8] as BytesRef), 2).unwrap();
         state.push_result(&mut ctx, &mut result[..]).unwrap();
         assert_eq!(result[0].as_bytes_slice(), &[Some(vec![1])]);
 
-        state.update_repeat(&mut ctx, &Some(vec![2]), 3).unwrap();
+        update_repeat!(state, &mut ctx, Some(&[2u8] as BytesRef), 3).unwrap();
         state.push_result(&mut ctx, &mut result[..]).unwrap();
         assert_eq!(result[0].as_bytes_slice(), &[Some(vec![1]), Some(vec![1])]);
     }
@@ -241,28 +253,44 @@ mod tests {
     #[test]
     fn test_update_vector() {
         let mut ctx = EvalContext::default();
-        let function = AggrFnFirst::<Int>::new();
+        let function = AggrFnFirst::<&'static Int>::new();
         let mut state = function.create_state();
         let mut result = [VectorValue::with_capacity(0, EvalType::Int)];
 
-        state.update_vector(&mut ctx, &[Some(0); 0], &[]).unwrap();
+        update_vector!(
+            state,
+            &mut ctx,
+            &NotChunkedVec::from_slice(&[Some(0); 0]),
+            &[]
+        )
+        .unwrap();
         state.push_result(&mut ctx, &mut result[..]).unwrap();
         assert_eq!(result[0].as_int_slice(), &[None]);
 
         result[0].clear();
-        state.update_vector(&mut ctx, &[Some(1)], &[]).unwrap();
+        update_vector!(state, &mut ctx, &NotChunkedVec::from_slice(&[Some(1)]), &[]).unwrap();
         state.push_result(&mut ctx, &mut result[..]).unwrap();
         assert_eq!(result[0].as_int_slice(), &[None]);
 
         result[0].clear();
-        state
-            .update_vector(&mut ctx, &[None, Some(2)], &[0, 1])
-            .unwrap();
+        update_vector!(
+            state,
+            &mut ctx,
+            &NotChunkedVec::from_slice(&[None, Some(2)]),
+            &[0, 1]
+        )
+        .unwrap();
         state.push_result(&mut ctx, &mut result[..]).unwrap();
         assert_eq!(result[0].as_int_slice(), &[None]);
 
         result[0].clear();
-        state.update_vector(&mut ctx, &[Some(1)], &[0]).unwrap();
+        update_vector!(
+            state,
+            &mut ctx,
+            &NotChunkedVec::from_slice(&[Some(1)]),
+            &[0]
+        )
+        .unwrap();
         state.push_result(&mut ctx, &mut result[..]).unwrap();
         assert_eq!(result[0].as_int_slice(), &[None]);
 
@@ -270,9 +298,13 @@ mod tests {
         let mut state = function.create_state();
 
         result[0].clear();
-        state
-            .update_vector(&mut ctx, &[None, Some(2)], &[1, 0])
-            .unwrap();
+        update_vector!(
+            state,
+            &mut ctx,
+            &NotChunkedVec::from_slice(&[None, Some(2)]),
+            &[1, 0]
+        )
+        .unwrap();
         state.push_result(&mut ctx, &mut result[..]).unwrap();
         assert_eq!(result[0].as_int_slice(), &[Some(2)]);
     }

@@ -2,6 +2,7 @@
 
 //! This crate provides aggregate functions for batch executors.
 
+#![allow(incomplete_features)]
 #![feature(proc_macro_hygiene)]
 #![feature(specialization)]
 
@@ -21,7 +22,7 @@ mod parser;
 mod summable;
 mod util;
 
-pub use self::parser::{AggrDefinitionParser, AllAggrDefinitionParser};
+pub use self::parser::AggrDefinitionParser;
 
 use tidb_query_common::Result;
 use tidb_query_datatype::codec::data_type::*;
@@ -41,12 +42,12 @@ use tidb_query_datatype::expr::EvalContext;
 ///    given data container.
 ///
 /// This trait can be auto derived by using `tidb_query_codegen::AggrFunction`.
-pub trait AggrFunction: std::fmt::Debug + Send + 'static {
+pub trait AggrFunction <'a>: std::fmt::Debug + Send {
     /// The display name of the function.
     fn name(&self) -> &'static str;
 
     /// Creates a new state instance. Different states aggregate independently.
-    fn create_state(&self) -> Box<dyn AggrFunctionState>;
+    fn create_state(&self) -> Box<dyn AggrFunctionState<'a> + 'a>;
 }
 
 /// A trait for all single parameter aggregate function states.
@@ -58,17 +59,16 @@ pub trait AggrFunction: std::fmt::Debug + Send + 'static {
 /// parameter in the correct data type for an aggregate function states that calculates over this
 /// data type. To be safely boxed and placed in a vector, interfaces are provided in a form that
 /// accept all kinds of data type. However, unmatched types will result in panics in runtime.
-pub trait AggrFunctionState:
+pub trait AggrFunctionState <'a>:
     std::fmt::Debug
     + Send
-    + 'static
-    + AggrFunctionStateUpdatePartial<Int>
-    + AggrFunctionStateUpdatePartial<Real>
-    + AggrFunctionStateUpdatePartial<Decimal>
-    + AggrFunctionStateUpdatePartial<Bytes>
-    + AggrFunctionStateUpdatePartial<DateTime>
-    + AggrFunctionStateUpdatePartial<Duration>
-    + AggrFunctionStateUpdatePartial<Json>
+    + AggrFunctionStateUpdatePartial<'a, &'a Int>
+    + AggrFunctionStateUpdatePartial<'a, &'a Real>
+    + AggrFunctionStateUpdatePartial<'a, &'a Decimal>
+    + AggrFunctionStateUpdatePartial<'a, BytesRef<'a>>
+    + AggrFunctionStateUpdatePartial<'a, &'a DateTime>
+    + AggrFunctionStateUpdatePartial<'a, &'a Duration>
+    + AggrFunctionStateUpdatePartial<'a, JsonRef<'a>>
 {
     // TODO: A better implementation is to specialize different push result targets. However
     // current aggregation executor cannot utilize it.
@@ -82,28 +82,70 @@ pub trait AggrFunctionState:
 /// functions according to the associated type. `update()` and `push_result()` functions that accept
 /// any eval types (but will panic when eval type does not match expectation) will be generated via
 /// implementations over this trait.
-pub trait ConcreteAggrFunctionState: std::fmt::Debug + Send + 'static {
-    type ParameterType: EvaluableRet;
+pub trait ConcreteAggrFunctionState <'a>: std::fmt::Debug + Send {
+    type ParameterType: EvaluableRef<'a>;
 
-    fn update_concrete(
+    /// # Safety
+    ///
+    /// This function should be called with `update_concrete` macro.
+    unsafe fn update_concrete_unsafe(
         &mut self,
         ctx: &mut EvalContext,
-        value: &Option<Self::ParameterType>,
+        value: Option<Self::ParameterType>,
     ) -> Result<()>;
 
     fn push_result(&self, ctx: &mut EvalContext, target: &mut [VectorValue]) -> Result<()>;
 }
 
+#[macro_export]
+macro_rules! update_concrete {
+    ( $state:expr, $ctx:expr, $value:expr ) => {
+        unsafe { $state.update_concrete_unsafe($ctx, $value.unsafe_into()) }
+    };
+}
+
+#[macro_export]
+macro_rules! update_vector {
+    ( $state:expr, $ctx:expr, $physical_values:expr, $logical_rows:expr ) => {
+        unsafe {
+            $state.update_vector_unsafe(
+                $ctx,
+                $physical_values.phantom_data().unsafe_into(),
+                $physical_values.unsafe_into(),
+                $logical_rows,
+            )
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! update_repeat {
+    ( $state:expr, $ctx:expr, $value:expr, $repeat_times:expr ) => {
+        unsafe { $state.update_repeat_unsafe($ctx, $value.unsafe_into(), $repeat_times) }
+    };
+}
+
+#[macro_export]
+macro_rules! update {
+    ( $state:expr, $ctx:expr, $value:expr ) => {
+        unsafe { $state.update_unsafe($ctx, $value.unsafe_into()) }
+    };
+}
+
 /// A helper trait that provides `update()` and `update_vector()` over a concrete type, which will
 /// be relied in `AggrFunctionState`.
-pub trait AggrFunctionStateUpdatePartial<T: EvaluableRet> {
+pub trait AggrFunctionStateUpdatePartial<'a, TT: EvaluableRef<'a>> {
     /// Updates the internal state giving one row data.
     ///
     /// # Panics
     ///
     /// Panics if the aggregate function does not support the supplied concrete data type as its
     /// parameter.
-    fn update(&mut self, ctx: &mut EvalContext, value: &Option<T>) -> Result<()>;
+    ///
+    /// # Safety
+    ///
+    /// This function should be called with `update` macro.
+    unsafe fn update_unsafe(&mut self, ctx: &mut EvalContext, value: Option<TT>) -> Result<()>;
 
     /// Repeatedly updates the internal state giving one row data.
     ///
@@ -111,10 +153,14 @@ pub trait AggrFunctionStateUpdatePartial<T: EvaluableRet> {
     ///
     /// Panics if the aggregate function does not support the supplied concrete data type as its
     /// parameter.
-    fn update_repeat(
+    ///
+    /// # Safety
+    ///
+    /// This function should be called with `update_repeat_unsafe` macro.
+    unsafe fn update_repeat_unsafe(
         &mut self,
         ctx: &mut EvalContext,
-        value: &Option<T>,
+        value: Option<TT>,
         repeat_times: usize,
     ) -> Result<()>;
 
@@ -124,86 +170,97 @@ pub trait AggrFunctionStateUpdatePartial<T: EvaluableRet> {
     ///
     /// Panics if the aggregate function does not support the supplied concrete data type as its
     /// parameter.
-    fn update_vector(
+    ///
+    /// # Safety
+    ///
+    /// This function should be called with `update_vector` macro.
+    unsafe fn update_vector_unsafe(
         &mut self,
         ctx: &mut EvalContext,
-        physical_values: &[Option<T>],
+        phantom_data: Option<TT>,
+        physical_values: TT::ChunkedType,
         logical_rows: &[usize],
     ) -> Result<()>;
 }
 
-impl<T: EvaluableRet, State> AggrFunctionStateUpdatePartial<T> for State
+impl<'a, T: EvaluableRef<'a>, State> AggrFunctionStateUpdatePartial<'a, T> for State
 where
-    State: ConcreteAggrFunctionState,
+    State: ConcreteAggrFunctionState <'a>,
 {
     // All `ConcreteAggrFunctionState` implement `AggrFunctionStateUpdatePartial<T>`, which is
     // one of the trait bound that `AggrFunctionState` requires.
 
     #[inline]
-    default fn update(&mut self, _ctx: &mut EvalContext, _value: &Option<T>) -> Result<()> {
+    default unsafe fn update_unsafe(
+        &mut self,
+        _ctx: &mut EvalContext,
+        _value: Option<T>,
+    ) -> Result<()> {
         panic!("Unmatched parameter type")
     }
 
     #[inline]
-    default fn update_repeat(
+    default unsafe fn update_repeat_unsafe(
         &mut self,
         _ctx: &mut EvalContext,
-        _value: &Option<T>,
+        _value: Option<T>,
         _repeat_times: usize,
     ) -> Result<()> {
         panic!("Unmatched parameter type")
     }
 
     #[inline]
-    default fn update_vector(
+    default unsafe fn update_vector_unsafe(
         &mut self,
         _ctx: &mut EvalContext,
-        _physical_values: &[Option<T>],
+        _phantom_data: Option<T>,
+        _physical_values: T::ChunkedType,
         _logical_rows: &[usize],
     ) -> Result<()> {
         panic!("Unmatched parameter type")
     }
 }
 
-impl<T: EvaluableRet, State> AggrFunctionStateUpdatePartial<T> for State
+impl<'a, T: EvaluableRef<'a>, State> AggrFunctionStateUpdatePartial<'a, T> for State
 where
-    State: ConcreteAggrFunctionState<ParameterType = T>,
+    State: ConcreteAggrFunctionState<'a, ParameterType = T>,
 {
     #[inline]
-    fn update(&mut self, ctx: &mut EvalContext, value: &Option<T>) -> Result<()> {
-        self.update_concrete(ctx, value)
+    unsafe fn update_unsafe(&mut self, ctx: &mut EvalContext, value: Option<T>) -> Result<()> {
+        self.update_concrete_unsafe(ctx, value)
     }
 
     #[inline]
-    fn update_repeat(
+    unsafe fn update_repeat_unsafe(
         &mut self,
         ctx: &mut EvalContext,
-        value: &Option<T>,
+        value: Option<T>,
         repeat_times: usize,
     ) -> Result<()> {
         for _ in 0..repeat_times {
-            self.update_concrete(ctx, value)?;
+            self.update_concrete_unsafe(ctx, value.clone())?;
         }
         Ok(())
     }
 
     #[inline]
-    fn update_vector(
+    unsafe fn update_vector_unsafe(
         &mut self,
         ctx: &mut EvalContext,
-        physical_values: &[Option<T>],
+        _phantom_data: Option<T>,
+        physical_values: T::ChunkedType,
         logical_rows: &[usize],
     ) -> Result<()> {
         for physical_index in logical_rows {
-            self.update_concrete(ctx, &physical_values[*physical_index])?;
+            self.update_concrete_unsafe(ctx, physical_values.get_option_ref(*physical_index))?;
         }
         Ok(())
     }
 }
 
-impl<F> AggrFunctionState for F
+impl<'a, F> AggrFunctionState <'a> for F
 where
-    F: ConcreteAggrFunctionState,
+    F: ConcreteAggrFunctionState <'a>,
 {
     fn push_result(&self, ctx: &mut EvalContext, target: &mut [VectorValue]) -> Result<()> {
         <Self as ConcreteAggrFunctionState>::push_result(self, ctx, target)
@@ -230,13 +287,13 @@ mod tests {
             }
         }
 
-        impl ConcreteAggrFunctionState for AggrFnStateFoo {
-            type ParameterType = Int;
+        impl <'a> ConcreteAggrFunctionState <'a> for AggrFnStateFoo {
+            type ParameterType = &'a Int;
 
-            fn update_concrete(
+            unsafe fn update_concrete_unsafe(
                 &mut self,
                 _ctx: &mut EvalContext,
-                value: &Option<Int>,
+                value: Option<&'a Int>,
             ) -> Result<()> {
                 if let Some(v) = value {
                     self.sum += *v;
@@ -258,25 +315,37 @@ mod tests {
         let mut s = AggrFnStateFoo::new();
 
         // Update using `Int` should success.
-        assert!((&mut s as &mut dyn AggrFunctionStateUpdatePartial<_>)
-            .update(&mut ctx, &Some(1))
-            .is_ok());
-        assert!((&mut s as &mut dyn AggrFunctionStateUpdatePartial<_>)
-            .update(&mut ctx, &Some(3))
-            .is_ok());
+        assert!(update!(
+            &mut s as &mut dyn AggrFunctionStateUpdatePartial<_>,
+            &mut ctx,
+            Some(&1)
+        )
+        .is_ok());
+        assert!(update!(
+            &mut s as &mut dyn AggrFunctionStateUpdatePartial<_>,
+            &mut ctx,
+            Some(&3)
+        )
+        .is_ok());
 
         // Update using other data type should panic.
         let result = panic_hook::recover_safe(|| {
             let mut s = s.clone();
-            let _ = (&mut s as &mut dyn AggrFunctionStateUpdatePartial<_>)
-                .update(&mut ctx, &Real::new(1.0).ok());
+            let _ = update!(
+                &mut s as &mut dyn AggrFunctionStateUpdatePartial<_>,
+                &mut ctx,
+                Real::new(1.0).ok().as_ref()
+            );
         });
         assert!(result.is_err());
 
         let result = panic_hook::recover_safe(|| {
             let mut s = s.clone();
-            let _ = (&mut s as &mut dyn AggrFunctionStateUpdatePartial<_>)
-                .update(&mut ctx, &Some(vec![1u8]));
+            let _ = update!(
+                &mut s as &mut dyn AggrFunctionStateUpdatePartial<_>,
+                &mut ctx,
+                Some(&[1u8] as BytesRef)
+            );
         });
         assert!(result.is_err());
 
@@ -289,9 +358,12 @@ mod tests {
         assert_eq!(target[0].as_real_slice(), &[Real::new(4.0).ok()]);
 
         // Calling push result multiple times should also success.
-        assert!((&mut s as &mut dyn AggrFunctionStateUpdatePartial<_>)
-            .update(&mut ctx, &Some(1))
-            .is_ok());
+        assert!(update!(
+            &mut s as &mut dyn AggrFunctionStateUpdatePartial<_>,
+            &mut ctx,
+            Some(&1)
+        )
+        .is_ok());
         assert!((&mut s as &mut dyn AggrFunctionState)
             .push_result(&mut ctx, &mut target)
             .is_ok());

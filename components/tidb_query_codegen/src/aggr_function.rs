@@ -2,7 +2,7 @@
 
 use ::darling::FromDeriveInput;
 use quote::quote;
-use syn::Token;
+use syn::{Token, parse_quote};
 
 mod kw {
     syn::custom_keyword!(state);
@@ -37,16 +37,21 @@ impl AggrFunctionOpts {
             .0;
         let ident = &self.ident;
         let name = ident.to_string();
-        let (impl_generics, ty_generics, where_clause) = self.generics.split_for_impl();
+        let mut generics = self.generics.clone();
+        if generics.lifetimes().next().is_none() {
+            generics.params.push(parse_quote!{ 'a });
+        }
+        let (_, ty_generics, where_clause) = self.generics.split_for_impl();
+        let (impl_generics, _, _) = generics.split_for_impl();
         quote! {
-            impl #impl_generics crate::AggrFunction for #ident #ty_generics #where_clause {
+            impl #impl_generics crate::AggrFunction <'a> for #ident #ty_generics #where_clause {
                 #[inline]
                 fn name(&self) -> &'static str {
                     #name
                 }
 
                 #[inline]
-                fn create_state(&self) -> Box<dyn crate::AggrFunctionState> {
+                fn create_state(&self) -> Box<dyn crate::AggrFunctionState <'a> + 'a> {
                     Box::new(#state_expr)
                 }
             }
