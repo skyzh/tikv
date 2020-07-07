@@ -14,21 +14,21 @@ use tidb_query_vec_expr::{RpnExpression, RpnExpressionBuilder};
 /// The parser for COUNT aggregate function.
 pub struct AggrFnDefinitionParserCount;
 
-impl super::AggrDefinitionParser for AggrFnDefinitionParserCount {
+impl <'a> super::AggrDefinitionParser <'a> for AggrFnDefinitionParserCount {
     fn check_supported(&self, aggr_def: &Expr) -> Result<()> {
         assert_eq!(aggr_def.get_tp(), ExprType::Count);
         super::util::check_aggr_exp_supported_one_child(aggr_def)
     }
 
     fn parse(
-        &self,
+        &'a self,
         mut aggr_def: Expr,
         ctx: &mut EvalContext,
         // We use the same structure for all data types, so this parameter is not needed.
         src_schema: &[FieldType],
         out_schema: &mut Vec<FieldType>,
         out_exp: &mut Vec<RpnExpression>,
-    ) -> Result<Box<dyn super::AggrFunction>> {
+    ) -> Result<Box<dyn super::AggrFunction<'a> + 'a>> {
         assert_eq!(aggr_def.get_tp(), ExprType::Count);
         let child = aggr_def.take_children().into_iter().next().unwrap();
 
@@ -72,7 +72,7 @@ impl AggrFnStateCount {
 // `update_vector` can be faster. Also note that we support all kind of
 // `AggrFunctionStateUpdatePartial` for the COUNT aggregate function.
 
-impl<T: EvaluableRef<'static>> super::AggrFunctionStateUpdatePartial<T> for AggrFnStateCount {
+impl<'a, T: EvaluableRef<'a>> super::AggrFunctionStateUpdatePartial<'a, T> for AggrFnStateCount {
     #[inline]
     unsafe fn update_unsafe(&mut self, _ctx: &mut EvalContext, value: Option<T>) -> Result<()> {
         if value.is_some() {
@@ -113,7 +113,7 @@ impl<T: EvaluableRef<'static>> super::AggrFunctionStateUpdatePartial<T> for Aggr
     }
 }
 
-impl super::AggrFunctionState for AggrFnStateCount {
+impl <'a> super::AggrFunctionState<'a> for AggrFnStateCount {
     #[inline]
     fn push_result(&self, _ctx: &mut EvalContext, target: &mut [VectorValue]) -> Result<()> {
         assert_eq!(target.len(), 1);

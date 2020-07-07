@@ -45,21 +45,21 @@ impl<T: Extremum> AggrFnDefinitionParserExtremum<T> {
     }
 }
 
-impl<T: Extremum> super::AggrDefinitionParser for AggrFnDefinitionParserExtremum<T> {
+impl<'a, T: Extremum> super::AggrDefinitionParser <'a> for AggrFnDefinitionParserExtremum<T> {
     fn check_supported(&self, aggr_def: &Expr) -> Result<()> {
         assert_eq!(aggr_def.get_tp(), T::TP);
         super::util::check_aggr_exp_supported_one_child(aggr_def)
     }
 
     fn parse(
-        &self,
+        &'a self,
         mut aggr_def: Expr,
         ctx: &mut EvalContext,
         // We use the same structure for all data types, so this parameter is not needed.
         src_schema: &[FieldType],
         out_schema: &mut Vec<FieldType>,
         out_exp: &mut Vec<RpnExpression>,
-    ) -> Result<Box<dyn super::AggrFunction>> {
+    ) -> Result<Box<dyn super::AggrFunction<'a> + 'a>> {
         assert_eq!(aggr_def.get_tp(), T::TP);
         let child = aggr_def.take_children().into_iter().next().unwrap();
         let eval_type = EvalType::try_from(child.get_field_type().as_accessor().tp()).unwrap();
@@ -94,9 +94,9 @@ impl<T: Extremum> super::AggrDefinitionParser for AggrFnDefinitionParserExtremum
         match_template::match_template! {
             TT = [Int, Real, Duration, Decimal, DateTime],
             match eval_type {
-                EvalType::TT => Ok(Box::new(AggFnExtremum::<&'static TT, T>::new())),
-                EvalType::Json => Ok(Box::new(AggFnExtremum::<BytesRef<'static>, T>::new())),
-                EvalType::Bytes => Ok(Box::new(AggFnExtremum::<JsonRef<'static>, T>::new()))
+                EvalType::TT => Ok(Box::new(AggFnExtremum::<'_, &TT, T>::new())),
+                EvalType::Json => Ok(Box::new(AggFnExtremum::<'_, BytesRef<'static>, T>::new())),
+                EvalType::Bytes => Ok(Box::new(AggFnExtremum::<'_, JsonRef<'static>, T>::new()))
             }
         }
     }
@@ -151,13 +151,13 @@ where
     }
 }
 
-impl<C, E> super::ConcreteAggrFunctionState for AggFnStateExtremum4Bytes<C, E>
+impl<'a, C, E> super::ConcreteAggrFunctionState<'a> for AggFnStateExtremum4Bytes<C, E>
 where
     VectorValue: VectorValueExt<Bytes>,
     C: Collator,
     E: Extremum,
 {
-    type ParameterType = BytesRef<'static>;
+    type ParameterType = BytesRef<'a>;
 
     #[inline]
     unsafe fn update_concrete_unsafe(
@@ -189,19 +189,19 @@ where
 
 /// The MAX/MIN aggregate functions.
 #[derive(Debug, AggrFunction)]
-#[aggr_function(state = AggFnStateExtremum::<T, E>::new())]
-pub struct AggFnExtremum<T, E>
+#[aggr_function(state = AggFnStateExtremum::<'a, T, E>::new())]
+pub struct AggFnExtremum<'a, T, E>
 where
-    T: EvaluableRef<'static> + 'static + Ord,
+    T: EvaluableRef<'a> + 'a + Ord,
     E: Extremum,
     VectorValue: VectorValueExt<T::EvaluableType>,
 {
-    _phantom: std::marker::PhantomData<(T, E)>,
+    _phantom: std::marker::PhantomData<(&'a T, E)>,
 }
 
-impl<T, E> AggFnExtremum<T, E>
+impl<'a, T, E> AggFnExtremum<'a, T, E>
 where
-    T: EvaluableRef<'static> + 'static + Ord,
+    T: EvaluableRef<'a> + 'a + Ord,
     E: Extremum,
     VectorValue: VectorValueExt<T::EvaluableType>,
 {
@@ -214,9 +214,9 @@ where
 
 /// The state of the MAX/MIN aggregate function.
 #[derive(Debug)]
-pub struct AggFnStateExtremum<T, E>
+pub struct AggFnStateExtremum<'a, T, E>
 where
-    T: EvaluableRef<'static> + 'static + Ord,
+    T: EvaluableRef<'a> + 'a + Ord,
     E: Extremum,
     VectorValue: VectorValueExt<T::EvaluableType>,
 {
@@ -224,9 +224,9 @@ where
     _phantom: std::marker::PhantomData<E>,
 }
 
-impl<T, E> AggFnStateExtremum<T, E>
+impl<'a, T, E> AggFnStateExtremum<'a, T, E>
 where
-    T: EvaluableRef<'static> + 'static + Ord,
+    T: EvaluableRef<'a> + 'a + Ord,
     E: Extremum,
     VectorValue: VectorValueExt<T::EvaluableType>,
 {
@@ -238,9 +238,9 @@ where
     }
 }
 
-impl<T, E> super::ConcreteAggrFunctionState for AggFnStateExtremum<T, E>
+impl<'a, T, E> super::ConcreteAggrFunctionState<'a> for AggFnStateExtremum<'a, T, E>
 where
-    T: EvaluableRef<'static> + 'static + Ord,
+    T: EvaluableRef<'a> + 'a + Ord,
     E: Extremum,
     VectorValue: VectorValueExt<T::EvaluableType>,
 {

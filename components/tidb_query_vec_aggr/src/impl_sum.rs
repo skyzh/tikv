@@ -14,20 +14,20 @@ use tidb_query_vec_expr::{RpnExpression, RpnExpressionBuilder};
 /// The parser for SUM aggregate function.
 pub struct AggrFnDefinitionParserSum;
 
-impl super::parser::AggrDefinitionParser for AggrFnDefinitionParserSum {
+impl <'a> super::parser::AggrDefinitionParser <'a>for AggrFnDefinitionParserSum {
     fn check_supported(&self, aggr_def: &Expr) -> Result<()> {
         assert_eq!(aggr_def.get_tp(), ExprType::Sum);
         super::util::check_aggr_exp_supported_one_child(aggr_def)
     }
 
     fn parse(
-        &self,
+        &'a self,
         mut aggr_def: Expr,
         ctx: &mut EvalContext,
         src_schema: &[FieldType],
         out_schema: &mut Vec<FieldType>,
         out_exp: &mut Vec<RpnExpression>,
-    ) -> Result<Box<dyn super::AggrFunction>> {
+    ) -> Result<Box<dyn super::AggrFunction<'a> + 'a>> {
         use std::convert::TryFrom;
         use tidb_query_datatype::FieldTypeAccessor;
 
@@ -114,18 +114,18 @@ where
     }
 }
 
-impl<T> super::ConcreteAggrFunctionState for AggrFnStateSum<T>
+impl<'a, T> super::ConcreteAggrFunctionState<'a> for AggrFnStateSum<T>
 where
     T: Summable,
     VectorValue: VectorValueExt<T>,
 {
-    type ParameterType = &'static T;
+    type ParameterType = &'a T;
 
     #[inline]
     unsafe fn update_concrete_unsafe(
         &mut self,
         ctx: &mut EvalContext,
-        value: Option<&'static T>,
+        value: Option<&'a T>,
     ) -> Result<()> {
         match value {
             None => Ok(()),

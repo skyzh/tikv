@@ -22,7 +22,7 @@ mod parser;
 mod summable;
 mod util;
 
-pub use self::parser::{AggrDefinitionParser, AllAggrDefinitionParser};
+pub use self::parser::AggrDefinitionParser;
 
 use tidb_query_common::Result;
 use tidb_query_datatype::codec::data_type::*;
@@ -42,12 +42,12 @@ use tidb_query_datatype::expr::EvalContext;
 ///    given data container.
 ///
 /// This trait can be auto derived by using `tidb_query_codegen::AggrFunction`.
-pub trait AggrFunction: std::fmt::Debug + Send + 'static {
+pub trait AggrFunction <'a>: std::fmt::Debug + Send {
     /// The display name of the function.
     fn name(&self) -> &'static str;
 
     /// Creates a new state instance. Different states aggregate independently.
-    fn create_state(&self) -> Box<dyn AggrFunctionState>;
+    fn create_state(&self) -> Box<dyn AggrFunctionState<'a> + 'a>;
 }
 
 /// A trait for all single parameter aggregate function states.
@@ -59,17 +59,16 @@ pub trait AggrFunction: std::fmt::Debug + Send + 'static {
 /// parameter in the correct data type for an aggregate function states that calculates over this
 /// data type. To be safely boxed and placed in a vector, interfaces are provided in a form that
 /// accept all kinds of data type. However, unmatched types will result in panics in runtime.
-pub trait AggrFunctionState:
+pub trait AggrFunctionState <'a>:
     std::fmt::Debug
     + Send
-    + 'static
-    + AggrFunctionStateUpdatePartial<&'static Int>
-    + AggrFunctionStateUpdatePartial<&'static Real>
-    + AggrFunctionStateUpdatePartial<&'static Decimal>
-    + AggrFunctionStateUpdatePartial<BytesRef<'static>>
-    + AggrFunctionStateUpdatePartial<&'static DateTime>
-    + AggrFunctionStateUpdatePartial<&'static Duration>
-    + AggrFunctionStateUpdatePartial<JsonRef<'static>>
+    + AggrFunctionStateUpdatePartial<'a, &'a Int>
+    + AggrFunctionStateUpdatePartial<'a, &'a Real>
+    + AggrFunctionStateUpdatePartial<'a, &'a Decimal>
+    + AggrFunctionStateUpdatePartial<'a, BytesRef<'a>>
+    + AggrFunctionStateUpdatePartial<'a, &'a DateTime>
+    + AggrFunctionStateUpdatePartial<'a, &'a Duration>
+    + AggrFunctionStateUpdatePartial<'a, JsonRef<'a>>
 {
     // TODO: A better implementation is to specialize different push result targets. However
     // current aggregation executor cannot utilize it.
@@ -83,8 +82,8 @@ pub trait AggrFunctionState:
 /// functions according to the associated type. `update()` and `push_result()` functions that accept
 /// any eval types (but will panic when eval type does not match expectation) will be generated via
 /// implementations over this trait.
-pub trait ConcreteAggrFunctionState: std::fmt::Debug + Send + 'static {
-    type ParameterType: EvaluableRef<'static>;
+pub trait ConcreteAggrFunctionState <'a>: std::fmt::Debug + Send {
+    type ParameterType: EvaluableRef<'a>;
 
     /// # Safety
     ///
@@ -135,7 +134,7 @@ macro_rules! update {
 
 /// A helper trait that provides `update()` and `update_vector()` over a concrete type, which will
 /// be relied in `AggrFunctionState`.
-pub trait AggrFunctionStateUpdatePartial<TT: EvaluableRef<'static>> {
+pub trait AggrFunctionStateUpdatePartial<'a, TT: EvaluableRef<'a>> {
     /// Updates the internal state giving one row data.
     ///
     /// # Panics
@@ -184,9 +183,9 @@ pub trait AggrFunctionStateUpdatePartial<TT: EvaluableRef<'static>> {
     ) -> Result<()>;
 }
 
-impl<T: EvaluableRef<'static>, State> AggrFunctionStateUpdatePartial<T> for State
+impl<'a, T: EvaluableRef<'a>, State> AggrFunctionStateUpdatePartial<'a, T> for State
 where
-    State: ConcreteAggrFunctionState,
+    State: ConcreteAggrFunctionState <'a>,
 {
     // All `ConcreteAggrFunctionState` implement `AggrFunctionStateUpdatePartial<T>`, which is
     // one of the trait bound that `AggrFunctionState` requires.
@@ -222,9 +221,9 @@ where
     }
 }
 
-impl<T: EvaluableRef<'static>, State> AggrFunctionStateUpdatePartial<T> for State
+impl<'a, T: EvaluableRef<'a>, State> AggrFunctionStateUpdatePartial<'a, T> for State
 where
-    State: ConcreteAggrFunctionState<ParameterType = T>,
+    State: ConcreteAggrFunctionState<'a, ParameterType = T>,
 {
     #[inline]
     unsafe fn update_unsafe(&mut self, ctx: &mut EvalContext, value: Option<T>) -> Result<()> {
@@ -259,9 +258,9 @@ where
     }
 }
 
-impl<F> AggrFunctionState for F
+impl<'a, F> AggrFunctionState <'a> for F
 where
-    F: ConcreteAggrFunctionState,
+    F: ConcreteAggrFunctionState <'a>,
 {
     fn push_result(&self, ctx: &mut EvalContext, target: &mut [VectorValue]) -> Result<()> {
         <Self as ConcreteAggrFunctionState>::push_result(self, ctx, target)
@@ -288,13 +287,13 @@ mod tests {
             }
         }
 
-        impl ConcreteAggrFunctionState for AggrFnStateFoo {
-            type ParameterType = &'static Int;
+        impl <'a> ConcreteAggrFunctionState <'a> for AggrFnStateFoo {
+            type ParameterType = &'a Int;
 
             unsafe fn update_concrete_unsafe(
                 &mut self,
                 _ctx: &mut EvalContext,
-                value: Option<&'static Int>,
+                value: Option<&'a Int>,
             ) -> Result<()> {
                 if let Some(v) = value {
                     self.sum += *v;

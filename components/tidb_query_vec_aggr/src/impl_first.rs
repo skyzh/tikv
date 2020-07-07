@@ -15,20 +15,20 @@ use tidb_query_vec_expr::{RpnExpression, RpnExpressionBuilder};
 /// The parser for FIRST aggregate function.
 pub struct AggrFnDefinitionParserFirst;
 
-impl super::AggrDefinitionParser for AggrFnDefinitionParserFirst {
+impl <'a> super::AggrDefinitionParser<'a> for AggrFnDefinitionParserFirst {
     fn check_supported(&self, aggr_def: &Expr) -> Result<()> {
         assert_eq!(aggr_def.get_tp(), ExprType::First);
         super::util::check_aggr_exp_supported_one_child(aggr_def)
     }
 
     fn parse(
-        &self,
+        &'a self,
         mut aggr_def: Expr,
         ctx: &mut EvalContext,
         src_schema: &[FieldType],
         out_schema: &mut Vec<FieldType>,
         out_exp: &mut Vec<RpnExpression>,
-    ) -> Result<Box<dyn super::AggrFunction>> {
+    ) -> Result<Box<dyn super::AggrFunction<'a> + 'a>> {
         use std::convert::TryFrom;
         use tidb_query_datatype::FieldTypeAccessor;
 
@@ -57,25 +57,41 @@ impl super::AggrDefinitionParser for AggrFnDefinitionParserFirst {
         match_template::match_template! {
             TT = [Int, Real, Duration, Decimal, DateTime],
             match eval_type {
-                EvalType::TT => Ok(Box::new(AggrFnFirst::<&'static TT>::new())),
-                EvalType::Json => Ok(Box::new(AggrFnFirst::<JsonRef<'static>>::new())),
-                EvalType::Bytes => Ok(Box::new(AggrFnFirst::<BytesRef<'static>>::new())),
+                EvalType::TT => Ok(Box::new(AggrFnFirst::<'_, &TT>::new())),
+                EvalType::Json => Ok(Box::new(AggrFnFirst::<'_, JsonRef>::new())),
+                EvalType::Bytes => Ok(Box::new(AggrFnFirst::<'_, BytesRef>::new())),
             }
         }
     }
 }
 
 /// The FIRST aggregate function.
-#[derive(Debug, AggrFunction)]
-#[aggr_function(state = AggrFnStateFirst::<T>::new())]
-pub struct AggrFnFirst<T>(PhantomData<T>)
+// #[derive(Debug, AggrFunction)]
+// #[aggr_function(state = AggrFnStateFirst::<'_, T>::new())]
+#[derive(Debug)]
+pub struct AggrFnFirst<'a, T>(PhantomData<&'a T>)
 where
-    T: EvaluableRef<'static> + 'static,
+    T: EvaluableRef<'a> + 'a,
     VectorValue: VectorValueExt<T::EvaluableType>;
 
-impl<T> AggrFnFirst<T>
+impl<'a, T> crate::AggrFunction<'a> for AggrFnFirst<'a, T>
 where
-    T: EvaluableRef<'static> + 'static,
+    T: EvaluableRef<'a> + 'a,
+    VectorValue: VectorValueExt<T::EvaluableType>,
+{
+    #[inline]
+    fn name(&self) -> &'static str {
+        "AggrFnFirst"
+    }
+    #[inline]
+    fn create_state(&self) -> Box<dyn crate::AggrFunctionState<'a> + 'a> {
+        Box::new(AggrFnStateFirst::<'a, T>::new())
+    }
+}
+
+impl<'a, T> AggrFnFirst<'a, T>
+where
+    T: EvaluableRef<'a> + 'a,
     VectorValue: VectorValueExt<T::EvaluableType>,
 {
     fn new() -> Self {
@@ -85,18 +101,18 @@ where
 
 /// The state of the FIRST aggregate function.
 #[derive(Debug)]
-pub enum AggrFnStateFirst<T>
+pub enum AggrFnStateFirst<'a, T>
 where
-    T: EvaluableRef<'static> + 'static,
+    T: EvaluableRef<'a> + 'a,
     VectorValue: VectorValueExt<T::EvaluableType>,
 {
     Empty,
     Valued(Option<T::EvaluableType>),
 }
 
-impl<T> AggrFnStateFirst<T>
+impl<'a, T> AggrFnStateFirst<'a, T>
 where
-    T: EvaluableRef<'static> + 'static,
+    T: EvaluableRef<'a> + 'a,
     VectorValue: VectorValueExt<T::EvaluableType>,
 {
     pub fn new() -> Self {
@@ -106,9 +122,9 @@ where
 
 // Here we manually implement `AggrFunctionStateUpdatePartial` instead of implementing
 // `ConcreteAggrFunctionState` so that `update_repeat` and `update_vector` can be faster.
-impl<T> super::AggrFunctionStateUpdatePartial<T> for AggrFnStateFirst<T>
+impl<'a, T> super::AggrFunctionStateUpdatePartial<'a, T> for AggrFnStateFirst<'a, T>
 where
-    T: EvaluableRef<'static> + 'static,
+    T: EvaluableRef<'a> + 'a,
     VectorValue: VectorValueExt<T::EvaluableType>,
 {
     // ChunkedType has been implemented in AggrFunctionStateUpdatePartial<T1> for AggrFnStateFirst<T2>
@@ -150,10 +166,10 @@ where
 
 // In order to make `AggrFnStateFirst` satisfy the `AggrFunctionState` trait, we default impl all
 // `AggrFunctionStateUpdatePartial` of `Evaluable` for all `AggrFnStateFirst`.
-impl<T1, T2> super::AggrFunctionStateUpdatePartial<T1> for AggrFnStateFirst<T2>
+impl<'a, 'b, T1, T2> super::AggrFunctionStateUpdatePartial<'a, T1> for AggrFnStateFirst<'b, T2>
 where
-    T1: EvaluableRef<'static> + 'static,
-    T2: EvaluableRef<'static> + 'static,
+    T1: EvaluableRef<'a> + 'a,
+    T2: EvaluableRef<'b> + 'b,
     VectorValue: VectorValueExt<T2::EvaluableType>,
 {
     #[inline]
@@ -187,9 +203,9 @@ where
     }
 }
 
-impl<T> super::AggrFunctionState for AggrFnStateFirst<T>
+impl<'a, T> super::AggrFunctionState<'a> for AggrFnStateFirst<'a, T>
 where
-    T: EvaluableRef<'static> + 'static,
+    T: EvaluableRef<'a> + 'a,
     VectorValue: VectorValueExt<T::EvaluableType>,
 {
     fn push_result(&self, _ctx: &mut EvalContext, target: &mut [VectorValue]) -> Result<()> {

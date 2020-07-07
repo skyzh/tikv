@@ -14,7 +14,7 @@ use tidb_query_vec_expr::RpnExpression;
 /// All aggregate function implementations should include an impl for this trait as well as
 /// add a match arm in `map_pb_sig_to_aggr_func_parser` so that the aggregate function can be
 /// actually utilized.
-pub trait AggrDefinitionParser {
+pub trait AggrDefinitionParser <'a>{
     /// Checks whether the inner expression of the aggregate function definition is supported.
     /// It is ensured that `aggr_def.tp` maps the current parser instance.
     fn check_supported(&self, aggr_def: &Expr) -> Result<()>;
@@ -32,17 +32,17 @@ pub trait AggrDefinitionParser {
     ///
     /// May panic if the aggregate function definition is not supported by this parser.
     fn parse(
-        &self,
+        &'a self,
         aggr_def: Expr,
         ctx: &mut EvalContext,
         src_schema: &[FieldType],
         out_schema: &mut Vec<FieldType>,
         out_exp: &mut Vec<RpnExpression>,
-    ) -> Result<Box<dyn AggrFunction>>;
+    ) -> Result<Box<dyn AggrFunction<'a> + 'a>>;
 }
 
 #[inline]
-fn map_pb_sig_to_aggr_func_parser(value: ExprType) -> Result<Box<dyn AggrDefinitionParser>> {
+fn map_pb_sig_to_aggr_func_parser<'a>(value: ExprType) -> Result<Box<dyn AggrDefinitionParser <'a> + 'a>> {
     match value {
         ExprType::Count => Ok(Box::new(super::impl_count::AggrFnDefinitionParserCount)),
         ExprType::Sum => Ok(Box::new(super::impl_sum::AggrFnDefinitionParserSum)),
@@ -63,7 +63,7 @@ fn map_pb_sig_to_aggr_func_parser(value: ExprType) -> Result<Box<dyn AggrDefinit
 /// Parse all aggregate function definition from protobuf.
 pub struct AllAggrDefinitionParser;
 
-impl AggrDefinitionParser for AllAggrDefinitionParser {
+impl <'a> AggrDefinitionParser <'a> for AllAggrDefinitionParser {
     /// Checks whether the aggregate function definition is supported.
     #[inline]
     fn check_supported(&self, aggr_def: &Expr) -> Result<()> {
@@ -85,14 +85,14 @@ impl AggrDefinitionParser for AllAggrDefinitionParser {
     /// May panic if the aggregate function definition is not supported.
     #[inline]
     fn parse(
-        &self,
+        &'a self,
         aggr_def: Expr,
         ctx: &mut EvalContext,
         src_schema: &[FieldType],
         out_schema: &mut Vec<FieldType>,
         out_exp: &mut Vec<RpnExpression>,
-    ) -> Result<Box<dyn AggrFunction>> {
-        let parser = map_pb_sig_to_aggr_func_parser(aggr_def.get_tp()).unwrap();
+    ) -> Result<Box<dyn AggrFunction<'a> + 'a>> {
+        let parser= map_pb_sig_to_aggr_func_parser(aggr_def.get_tp()).unwrap();
         parser.parse(aggr_def, ctx, src_schema, out_schema, out_exp)
     }
 }

@@ -54,7 +54,7 @@ impl<T: BitOp> AggrFnDefinitionParserBitOp<T> {
     }
 }
 
-impl<T: BitOp> super::AggrDefinitionParser for AggrFnDefinitionParserBitOp<T> {
+impl<'a, T: BitOp> super::AggrDefinitionParser <'a> for AggrFnDefinitionParserBitOp<T> {
     fn check_supported(&self, aggr_def: &Expr) -> Result<()> {
         assert_eq!(aggr_def.get_tp(), T::tp());
         super::util::check_aggr_exp_supported_one_child(aggr_def)?;
@@ -62,14 +62,14 @@ impl<T: BitOp> super::AggrDefinitionParser for AggrFnDefinitionParserBitOp<T> {
     }
 
     fn parse(
-        &self,
+        &'a self,
         mut aggr_def: Expr,
         ctx: &mut EvalContext,
         // We use the same structure for all data types, so this parameter is not needed.
         src_schema: &[FieldType],
         out_schema: &mut Vec<FieldType>,
         out_exp: &mut Vec<RpnExpression>,
-    ) -> Result<Box<dyn super::AggrFunction>> {
+    ) -> Result<Box<dyn super::AggrFunction<'a> + 'a>> {
         assert_eq!(aggr_def.get_tp(), T::tp());
 
         // bit operation outputs one column.
@@ -106,8 +106,8 @@ impl<T: BitOp> AggrFnStateBitOp<T> {
     }
 }
 
-impl<T: BitOp> super::ConcreteAggrFunctionState for AggrFnStateBitOp<T> {
-    type ParameterType = &'static Int;
+impl<'a, T: BitOp> super::ConcreteAggrFunctionState <'a>for AggrFnStateBitOp<T> {
+    type ParameterType = &'a Int;
 
     #[inline]
     unsafe fn update_concrete_unsafe(
